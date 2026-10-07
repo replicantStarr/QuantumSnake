@@ -101,7 +101,7 @@ Ghost blocks look different from solid segments. A new ghost is black with a gre
 
 ### Purple apples
 
-Every so often, two purple apples appear at once, joined by a pulsing dotted line that shows they are entangled. Whoever eats the first one triggers the measurement:
+Each time you eat a normal apple there's a 1 in 7 chance that two purple apples appear at once (about one pair every 7 apples), joined by a pulsing dotted line that shows they are entangled. Whoever eats the first one triggers the measurement:
 
 - If it comes up **+20**, the eater grows 20 solid blocks and the twin left on the board turns **deadly**: dark red with an ✕.
 - If it comes up **deadly**, the eater dies and the twin turns **gold**, worth +20 to whoever reaches it.

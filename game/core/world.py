@@ -20,7 +20,7 @@ LEFT = (-1, 0)
 RIGHT = (1, 0)
 
 MAX_QUEUED_TURNS = 2
-PURPLE_SPAWN_CHANCE = 0.01  # per step, while no purple pair is on the board
+PURPLE_SPAWN_CHANCE = 1 / 7  # per normal apple eaten, while no purple pair is on the board (~1 pair every 7 apples)
 
 SOLO_SPAWN = ((GRID_WIDTH // 4, GRID_HEIGHT // 2), RIGHT)
 VERSUS_SPAWNS = [
@@ -344,6 +344,8 @@ class World:
                 self.purple_apples.remove(apple)
             else:
                 self.apple = self.spawn_apple()
+                if not self.purple_apples and random.random() < PURPLE_SPAWN_CHANCE:
+                    self.purple_apples = self.spawn_purple_pair()
             events.append(event)
             if not p.alive:
                 events.append({"type": "die", "player": p.id})
@@ -353,8 +355,6 @@ class World:
             if apple.outcome is not None:
                 apple.steps_left -= 1
         self.purple_apples = [apple for apple in self.purple_apples if apple.steps_left > 0]
-        if not self.purple_apples and random.random() < PURPLE_SPAWN_CHANCE:
-            self.purple_apples = self.spawn_purple_pair()
 
         survivors_needed = 2 if self.versus else 1
         self.over = len(self.alive_players) < survivors_needed
