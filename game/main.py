@@ -1,19 +1,22 @@
+import math
 import random
 from collections import deque
 
 import pygame
 
 from apples import APPLE_TYPES
+from Quantum import QuantumState
 
 CELL_SIZE = 24
 GRID_WIDTH = 25
 GRID_HEIGHT = 20
 START_SPEED = 8  # moves per second
 
-BG_COLOR = (20, 20, 20)
+BG_COLOR = (173, 216, 230)
 SNAKE_COLOR = (60, 200, 90)
 HEAD_COLOR = (120, 240, 140)
-TEXT_COLOR = (230, 230, 230)
+GHOST_OUTLINE_COLOR = (0, 255, 0)
+TEXT_COLOR = (30, 40, 50)
 
 UP = (0, -1)
 DOWN = (0, 1)
@@ -30,11 +33,13 @@ KEY_DIRECTIONS = {
 
 
 class Snake:
-    def __init__(self, start):
+    def __init__(self, start, quantum=None):
         self.body = deque([start])
+        self.block_types = deque([None])
+        self.quantum = quantum
         self.direction = RIGHT
         self._next_direction = RIGHT
-        self._pending_growth = 2
+        self._pending_growth_types = [None, None]
 
     @property
     def head(self):
@@ -51,18 +56,37 @@ class Snake:
         self.direction = self._next_direction
         x, y = self.head
         self.body.appendleft((x + self.direction[0], y + self.direction[1]))
-        if self._pending_growth > 0:
-            self._pending_growth -= 1
+        is_growing = bool(self._pending_growth_types)
+        if is_growing:
+            self.block_types.append(self._pending_growth_types.pop(0))
         else:
             self.body.pop()
 
-    def grow(self, amount=1):
-        self._pending_growth += amount
+    def grow(self, amount=1, ghost_id=None):
+        self._pending_growth_types.extend([ghost_id] * amount)
 
     def shrink(self, amount=1):
         for _ in range(amount):
             if len(self.body) > 1:
                 self.body.pop()
+                self._remove_block_type(self.block_types.pop())
+
+    def _remove_block_type(self, block_type):
+        if block_type is not None and self.quantum is not None:
+            self.quantum.remove_ghost(block_type)
+
+    def resolve_ghost(self, ghost_id, outcome):
+        if ghost_id in self._pending_growth_types:
+            self._pending_growth_types.remove(ghost_id)
+        try:
+            index = self.block_types.index(ghost_id)
+        except ValueError:
+            return
+        if outcome:
+            self.block_types[index] = None
+        else:
+            del self.block_types[index]
+            del self.body[index]
 
     def hits_itself(self):
         return self.head in list(self.body)[1:]
@@ -70,11 +94,22 @@ class Snake:
     def occupies(self, position):
         return position in self.body
 
-    def draw(self, surface, cell_size):
+    def draw(self, surface, cell_size, ghost_phases):
         for i, (x, y) in enumerate(self.body):
-            color = HEAD_COLOR if i == 0 else SNAKE_COLOR
             rect = pygame.Rect(x * cell_size, y * cell_size, cell_size, cell_size)
-            pygame.draw.rect(surface, color, rect.inflate(-2, -2))
+            block_type = self.block_types[i]
+            block_rect = rect.inflate(-2, -2)
+            if block_type is not None:
+                phase = ghost_phases.get(block_type)
+                if phase is None:
+                    pygame.draw.rect(surface, (0, 0, 0), block_rect)
+                    pygame.draw.rect(surface, GHOST_OUTLINE_COLOR, block_rect, 2)
+                else:
+                    color = (0, 100, 0) if phase < math.pi / 2 else (40, 110, 255)
+                    pygame.draw.rect(surface, color, block_rect)
+            else:
+                color = HEAD_COLOR if i == 0 else SNAKE_COLOR
+                pygame.draw.rect(surface, color, block_rect)
 
 
 class Game:
@@ -87,11 +122,15 @@ class Game:
         self.reset()
 
     def reset(self):
-        self.snake = Snake((GRID_WIDTH // 4, GRID_HEIGHT // 2))
-        self.score = 0
+        self.quantum = QuantumState()
+        self.snake = Snake((GRID_WIDTH // 4, GRID_HEIGHT // 2), self.quantum)
         self.speed = START_SPEED
         self.game_over = False
         self.apple = self.spawn_apple()
+
+    @property
+    def score(self):
+        return sum(block_type is None for block_type in self.snake.block_types)
 
     def spawn_apple(self):
         free_cells = [
@@ -122,6 +161,14 @@ class Game:
     def update(self):
         if self.game_over:
             return
+        dx, dy = self.snake._next_direction
+        next_head = (self.snake.head[0] + dx, self.snake.head[1] + dy)
+        if any(
+            position == next_head and block_type is not None
+            for position, block_type in zip(self.snake.body, self.snake.block_types)
+        ):
+            self.collapse_ghosts()
+
         self.snake.move()
         x, y = self.snake.head
         out_of_bounds = not (0 <= x < GRID_WIDTH and 0 <= y < GRID_HEIGHT)
@@ -132,11 +179,15 @@ class Game:
             self.apple.on_eaten(self)
             self.apple = self.spawn_apple()
 
+    def collapse_ghosts(self):
+        for ghost_id, outcome in self.quantum.measure().items():
+            self.snake.resolve_ghost(ghost_id, outcome)
+
     def draw(self):
         self.screen.fill(BG_COLOR)
         if self.apple:
             self.apple.draw(self.screen, CELL_SIZE)
-        self.snake.draw(self.screen, CELL_SIZE)
+        self.snake.draw(self.screen, CELL_SIZE, self.quantum.ghost_phases)
         self.draw_text(f"Score: {self.score}", (8, 8))
         if self.game_over:
             self.draw_text("Game Over - press Space to restart", center=True)
