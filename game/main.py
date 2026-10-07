@@ -16,7 +16,7 @@ import pygame  # noqa: E402
 import graphics as gfx  # noqa: E402
 from game import GameScene, HostSession, LocalSession  # noqa: E402
 from lobby import ClientLobby, HostLobby, ServerBrowser  # noqa: E402
-from menu import MainMenu, MenuBackground, SettingsMenu, ui_scale  # noqa: E402
+from menu import HowToPlayMenu, MainMenu, MenuBackground, MultiplayerMenu, SettingsMenu, ui_scale  # noqa: E402
 from network import HOST_PLAYER_ID, Client, Host  # noqa: E402
 from settings import Settings  # noqa: E402
 
@@ -70,8 +70,16 @@ class App:
         self.set_scene(MainMenu(self))
         self.show_notice(notice)
 
+    def show_multiplayer_menu(self, notice=None):
+        self.close_network()
+        self.set_scene(MultiplayerMenu(self))
+        self.show_notice(notice)
+
     def show_settings(self):
         self.set_scene(SettingsMenu(self))
+
+    def show_how_to_play(self):
+        self.set_scene(HowToPlayMenu(self))
 
     def start_game(self):
         self.set_scene(GameScene(self, LocalSession(self, [(HOST_PLAYER_ID, self.settings.player_name)])))

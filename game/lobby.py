@@ -82,7 +82,7 @@ class ServerBrowser(MenuScene):
         super().update(dt)
 
     def back(self):
-        self.app.show_main_menu()
+        self.app.show_multiplayer_menu()
 
     def close(self):
         self.discovery.close()
@@ -118,7 +118,7 @@ class HostLobby(MenuScene):
         super().update(dt)
 
     def back(self):
-        self.app.show_main_menu()
+        self.app.show_multiplayer_menu()
 
 
 class ClientLobby(MenuScene):
