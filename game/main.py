@@ -25,7 +25,6 @@ FPS = 120
 MAX_FRAME_TIME = 0.1  # seconds; stops the game jumping ahead after a stall
 NOTICE_TIME = 4.0
 
-
 class App:
     def __init__(self):
         pygame.init()

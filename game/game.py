@@ -244,7 +244,7 @@ class GameScene:
         center = (apple.position[0] + 0.5, apple.position[1] + 0.5)
         self.particles.extend(render.Particle(center, apple.color) for _ in range(22))
         if event["gained"]:
-            self.popups.append(render.ScorePopup((center[0], center[1] - 0.6), f"+{event['gained']}", apple.color))
+            self.popups.append(render.ScorePopup((center[0], center[1] - 0.6), f"{event['gained']:+d}", apple.color))
         # Keep drawing it, shrinking, until the head visually reaches it.
         self.eaten_apple = apple
         self.eaten_step = self.session.steps
@@ -282,7 +282,7 @@ class GameScene:
         # Dead snakes underneath, then the others, with your own snake on top.
         order = sorted(enumerate(world.players), key=lambda ip: (ip[1].alive, ip[1].id == self.session.local_id))
         for index, player in order:
-            render.draw_snake(surface, player.snake, to_px, cell, t, self.palette_for(index), dead=not player.alive)
+            render.draw_snake(surface, player.snake, to_px, cell, t, self.palette_for(index), player.ghost_phases, dead=not player.alive)
         for effect in self.particles + self.popups:
             effect.draw(surface, to_px, cell)
         surface.set_clip(None)

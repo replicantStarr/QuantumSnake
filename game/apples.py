@@ -2,7 +2,7 @@
 
 To add your own apple:
     1. Subclass Apple.
-    2. Set `color` (and optionally `spawn_weight`, `glow_strength`).
+    2. Set `color` (and optionally `spawn_weight`, `glow_strength`, `rim_color`).
     3. Implement `on_eaten(self, game)` to do whatever you like to the game.
     4. Optionally override `draw_details(...)` to decorate it.
     5. Add the class to APPLE_TYPES at the bottom of this file.
@@ -10,8 +10,11 @@ To add your own apple:
 `game` exposes:
     game.snake.grow(n)   - add n segments to the snake that ate it
     game.snake.shrink(n) - remove n segments (never below 1)
-    game.score           - that snake's player's score, read/write
-    game.speed           - moves per second (shared by all snakes), read/write
+    game.quantum.add_ghost() - add a ghost-block qubit to the circuit
+    game.quantum.apply_green_apple() - apply a random Y rotation to all qubits
+    game.quantum.measure() - measure and resolve all ghost-block qubits
+    game.score           - number of concrete snake blocks
+    game.speed           - moves per second, read/write
 """
 
 import math
@@ -28,6 +31,7 @@ class Apple(ABC):
     color = (255, 255, 255)
     spawn_weight = 1  # Higher = more likely to spawn relative to other types
     glow_strength = 0.35
+    rim_color = None  # optional outline drawn just outside the apple
 
     def __init__(self, position):
         self.position = position
@@ -53,6 +57,8 @@ class Apple(ABC):
 
         gfx.blit_glow(surface, (cx, cy), cell * 1.1 * s, gfx.scale_color(self.color, self.glow_strength))
         gfx.aa_circle(surface, (0, 0, 0), (cx, cy + r * 0.25), r * 0.95)  # drop shadow
+        if self.rim_color:
+            gfx.aa_circle(surface, self.rim_color, (cx, cy), r + max(1, r * 0.08))
 
         # Sphere shading: concentric discs drifting towards the light (top-left).
         dark = gfx.scale_color(self.color, 0.55)
@@ -94,49 +100,27 @@ class RedApple(Apple):
     spawn_weight = 10
 
     def on_eaten(self, game):
-        game.snake.grow(1)
-        game.score += 1
+        ghost_id = game.quantum.add_ghost()
+        game.snake.grow(1, ghost_id=ghost_id)
 
 
-class GoldenApple(Apple):
-    color = (255, 200, 40)
+class GreenApple(Apple):
+    color = (50, 180, 70)
     spawn_weight = 2
-    glow_strength = 0.6
 
     def on_eaten(self, game):
-        game.snake.grow(3)
-        game.score += 5
-
-    def draw_details(self, surface, cx, cy, r, t):
-        # Orbiting twinkles.
-        for i in range(3):
-            a = t * 1.5 + i * math.tau / 3
-            twinkle = 0.5 + 0.5 * math.sin(t * 6 + i * 2)
-            x, y = cx + math.cos(a) * r * 1.5, cy + math.sin(a) * r * 1.5
-            size = r * 0.35 * twinkle
-            if size < 1:
-                continue
-            color = gfx.lerp_color((255, 220, 120), gfx.WHITE, twinkle)
-            gfx.aa_polygon(surface, color, [
-                (x, y - size), (x + size * 0.25, y - size * 0.25), (x + size, y), (x + size * 0.25, y + size * 0.25),
-                (x, y + size), (x - size * 0.25, y + size * 0.25), (x - size, y), (x - size * 0.25, y - size * 0.25),
-            ])
+        game.quantum.apply_green_apple()
 
 
-class SpeedApple(Apple):
-    color = (60, 140, 255)
+class BlackApple(Apple):
+    color = (10, 10, 10)
     spawn_weight = 2
-    glow_strength = 0.5
+    glow_strength = 0  # black has no glow; the rim makes it visible instead
+    rim_color = (220, 220, 220)
 
     def on_eaten(self, game):
-        game.snake.grow(1)
-        game.score += 2
-        game.speed += 2
-
-    def draw_details(self, surface, cx, cy, r, t):
-        bolt = [(0.15, -0.65), (-0.35, 0.08), (-0.02, 0.08), (-0.15, 0.65), (0.35, -0.1), (0.02, -0.1)]
-        gfx.aa_polygon(surface, (255, 245, 170), [(cx + x * r, cy + y * r) for x, y in bolt])
+        game.collapse_ghosts()
 
 
-APPLE_TYPES = [RedApple, GoldenApple, SpeedApple]
+APPLE_TYPES = [RedApple, GreenApple, BlackApple]
 APPLE_TYPES_BY_NAME = {apple_type.__name__: apple_type for apple_type in APPLE_TYPES}
