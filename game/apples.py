@@ -8,7 +8,7 @@ To add your own apple:
     5. Add the class to APPLE_TYPES at the bottom of this file.
 
 `game` exposes:
-    game.snake.grow(n)   - add n segments
+    game.snake.grow(n)   - add n segments to the snake that ate it
     game.snake.shrink(n) - remove n segments (never below 1)
     game.quantum.add_ghost() - add a ghost-block qubit to the circuit
     game.quantum.apply_green_apple() - apply a random Y rotation to all qubits
@@ -123,3 +123,4 @@ class BlackApple(Apple):
 
 
 APPLE_TYPES = [RedApple, GreenApple, BlackApple]
+APPLE_TYPES_BY_NAME = {apple_type.__name__: apple_type for apple_type in APPLE_TYPES}

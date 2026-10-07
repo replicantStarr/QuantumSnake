@@ -1,38 +1,25 @@
-"""The Snake gameplay scene.
+"""The gameplay scene, shared by solo, hosted and joined games.
 
-Game logic runs on a fixed GRID_WIDTH x GRID_HEIGHT grid at `speed` moves per
-second. Rendering runs every frame and interpolates the snake between grid
-cells, so movement looks smooth at any frame rate. The board is scaled to fit
+A session supplies the game state:
+    LocalSession  - runs the World here (solo play)
+    HostSession   - runs the World here and streams it to the other player
+    ClientSession - draws snapshots streamed from the host, sends steering input
+
+Game logic steps on a grid at `speed` moves per second; rendering runs every
+frame and interpolates the snakes between cells. The board is scaled to fit
 the window and letterboxed with black bars to keep its shape.
 """
 
 import math
 import random
-from collections import deque
 
 import pygame
 
 import graphics as gfx
-from apples import APPLE_TYPES
-from Quantum import QuantumState
-
-GRID_WIDTH = 25
-GRID_HEIGHT = 20
-START_SPEED = 8  # moves per second
-
-SNAKE_HEAD_COLOR = (130, 255, 170)
-SNAKE_TAIL_COLOR = (20, 130, 110)
-EYE_COLOR = (250, 250, 250)
-PUPIL_COLOR = (15, 20, 30)
-GHOST_FILL_COLOR = (0, 0, 0)
-GHOST_OUTLINE_COLOR = (0, 255, 0)
-GHOST_LOW_PHASE_COLOR = (0, 100, 0)  # Ry angle below pi/2
-GHOST_HIGH_PHASE_COLOR = (40, 110, 255)  # Ry angle pi/2 and above
-
-UP = (0, -1)
-DOWN = (0, 1)
-LEFT = (-1, 0)
-RIGHT = (1, 0)
+import render
+from apples import APPLE_TYPES_BY_NAME
+from network import HOST_PLAYER_ID
+from world import DOWN, GRID_HEIGHT, GRID_WIDTH, LEFT, RIGHT, UP, World
 
 # Arrow keys, WASD and numpad (8/4/6/2) all steer the snake.
 KEY_DIRECTIONS = {
@@ -41,270 +28,179 @@ KEY_DIRECTIONS = {
     pygame.K_LEFT: LEFT, pygame.K_a: LEFT, pygame.K_KP4: LEFT,
     pygame.K_RIGHT: RIGHT, pygame.K_d: RIGHT, pygame.K_KP6: RIGHT,
 }
+DIRECTIONS = (UP, DOWN, LEFT, RIGHT)
 RESTART_KEYS = (pygame.K_SPACE, pygame.K_RETURN, pygame.K_KP_ENTER)
 
-MAX_QUEUED_TURNS = 2
+COUNTDOWN = 3.0
+GO_TIME = 0.6
 SHAKE_TIME = 0.35
 GAME_OVER_FADE_TIME = 0.6
 
 
-class Snake:
-    def __init__(self, start, quantum=None):
-        self.body = deque([start])
-        # Parallel to body: None for a concrete block, else the block's ghost id.
-        self.block_types = deque([None])
-        self.quantum = quantum
-        self.direction = RIGHT
-        self._turns = deque()
-        self._pending_growth_types = [None, None]
-        self._prev_body = list(self.body)
+class LocalSession:
+    can_restart = True
+    over_hint = "Space to play again   ·   Esc for menu"
+
+    def __init__(self, app, players, local_id=HOST_PLAYER_ID):
+        self.app = app
+        self.players = players
+        self.local_id = local_id
+        self.generation = 0  # bumps on every (re)start so the scene can clear its effects
+        self.start()
+
+    def start(self):
+        self.world = World(self.players)
+        self.countdown = COUNTDOWN
+        self.step_timer = 0.0
+        self.steps = 0
+        self.generation += 1
 
     @property
-    def head(self):
-        return self.body[0]
+    def t(self):
+        """How far (0..1) the snakes are through their current move, for interpolation."""
+        if self.world.over or self.countdown > 0:
+            return 1.0
+        return min(1.0, self.step_timer * self.world.speed)
 
-    def queue_direction(self, direction):
-        # Buffer quick successive turns, validating each against the one before
-        # it so the snake can never reverse into itself.
-        last = self._turns[-1] if self._turns else self.direction
-        if direction in (last, (-last[0], -last[1])):
-            return
-        if len(self._turns) < MAX_QUEUED_TURNS:
-            self._turns.append(direction)
-
-    def next_head(self):
-        dx, dy = self._turns[0] if self._turns else self.direction
-        x, y = self.head
-        return x + dx, y + dy
-
-    def would_collide_with_self(self, position):
-        # The tail moves out of the way this step unless the snake is growing.
-        body = list(self.body)
-        if not self._pending_growth_types:
-            body = body[:-1]
-        return position in body
-
-    def move(self):
-        self._prev_body = list(self.body)
-        new_head = self.next_head()
-        if self._turns:
-            self.direction = self._turns.popleft()
-        self.body.appendleft(new_head)
-        if self._pending_growth_types:
-            self.block_types.append(self._pending_growth_types.pop(0))
-        else:
-            self.body.pop()
-
-    def settle(self):
-        """Stop interpolating: draw the snake exactly where it is."""
-        self._prev_body = list(self.body)
-
-    def grow(self, amount=1, ghost_id=None):
-        self._pending_growth_types.extend([ghost_id] * amount)
-
-    def shrink(self, amount=1):
-        for _ in range(amount):
-            if len(self.body) > 1:
-                self.body.pop()
-                self._remove_block_type(self.block_types.pop())
-
-    def _remove_block_type(self, block_type):
-        if block_type is not None and self.quantum is not None:
-            self.quantum.remove_ghost(block_type)
-
-    def resolve_ghost(self, ghost_id, outcome):
-        if ghost_id in self._pending_growth_types:
-            self._pending_growth_types.remove(ghost_id)
-        try:
-            index = self.block_types.index(ghost_id)
-        except ValueError:
-            return
-        if outcome:
-            self.block_types[index] = None
-        else:
-            del self.block_types[index]
-            del self.body[index]
-            # Keep the interpolation source aligned so the tail doesn't jump.
-            if index < len(self._prev_body):
-                del self._prev_body[index]
-
-    def ghost_at(self, position):
-        return any(
-            cell == position and block_type is not None
-            for cell, block_type in zip(self.body, self.block_types)
-        )
-
-    def occupies(self, position):
-        return position in self.body
-
-    def render_path(self, t):
-        """Centre-line of the snake in grid units, `t` (0..1) of the way through the current move."""
-        cur = [(x + 0.5, y + 0.5) for x, y in self.body]
-        prev = [(x + 0.5, y + 0.5) for x, y in self._prev_body]
-        (px, py), (cx, cy) = prev[0], cur[0]
-        path = [(gfx.lerp(px, cx, t), gfx.lerp(py, cy, t))] + cur[1:]
-        if len(prev) == len(cur):
-            # Tail is sliding out of its old cell.
-            (px, py), (cx, cy) = prev[-1], cur[-1]
-            path.append((gfx.lerp(px, cx, t), gfx.lerp(py, cy, t)))
-        return path
-
-    def draw(self, surface, to_px, cell, t, ghost_phases, dead=False):
-        points = [to_px(p) for p in self.render_path(t)]
-        n = len(points)
-        # Resolving a ghost to 0 removes it from the middle of the body, leaving a gap.
-        cells = list(self.body)
-        joined = [
-            k + 1 >= len(cells) or abs(cells[k][0] - cells[k + 1][0]) + abs(cells[k][1] - cells[k + 1][1]) == 1
-            for k in range(n)
-        ]
-
-        def block_type(k):
-            return self.block_types[min(k, len(self.block_types) - 1)]
-
-        def ghost_color(k):
-            phase = ghost_phases.get(block_type(k))
-            if phase is None:
-                return GHOST_FILL_COLOR
-            return GHOST_LOW_PHASE_COLOR if phase < math.pi / 2 else GHOST_HIGH_PHASE_COLOR
-
-        def body_color(k):
-            if block_type(k) is not None:
-                return ghost_color(k)
-            return gfx.lerp_color(SNAKE_HEAD_COLOR, SNAKE_TAIL_COLOR, min(1.0, k / max(8, n - 1)))
-
-        def outline(k):
-            if block_type(k) is not None and ghost_phases.get(block_type(k)) is None:
-                return GHOST_OUTLINE_COLOR
-            return gfx.scale_color(body_color(k), 0.35)
-
-        def highlight(k):
-            return gfx.lerp_color(body_color(k), gfx.WHITE, 0.35)
-
-        _draw_tube(surface, points, cell * 0.43, outline, joined)
-        _draw_tube(surface, points, cell * 0.36, body_color, joined)
-        off = -cell * 0.09
-        _draw_tube(surface, [(x + off, y + off) for x, y in points], cell * 0.1, highlight, joined)
-
-        self._draw_head(surface, points[0], cell, dead)
-
-    def _draw_head(self, surface, center, cell, dead):
-        hx, hy = center
-        gfx.aa_circle(surface, gfx.scale_color(SNAKE_HEAD_COLOR, 0.35), (hx, hy), cell * 0.47)
-        gfx.aa_circle(surface, SNAKE_HEAD_COLOR, (hx, hy), cell * 0.4)
-        dx, dy = self.direction
-        px, py = -dy, dx  # perpendicular
-        for side in (-1, 1):
-            ex = hx + dx * cell * 0.12 + px * side * cell * 0.18
-            ey = hy + dy * cell * 0.12 + py * side * cell * 0.18
-            gfx.aa_circle(surface, EYE_COLOR, (ex, ey), cell * 0.12)
-            if dead:
-                s = cell * 0.07
-                w = max(1, round(cell * 0.04))
-                pygame.draw.line(surface, PUPIL_COLOR, (ex - s, ey - s), (ex + s, ey + s), w)
-                pygame.draw.line(surface, PUPIL_COLOR, (ex - s, ey + s), (ex + s, ey - s), w)
-            else:
-                gfx.aa_circle(surface, PUPIL_COLOR, (ex + dx * cell * 0.04, ey + dy * cell * 0.04), cell * 0.065)
-
-
-def _draw_tube(surface, points, radius, color_for, joined):
-    """Thick rounded line through axis-aligned points, coloured per segment (tail drawn first).
-
-    `joined[k]` says whether point k connects to point k + 1."""
-    r = round(radius)
-    if r < 1:
-        return
-    points = [(round(x), round(y)) for x, y in points]
-    for k in range(len(points) - 1, -1, -1):
-        x, y = points[k]
-        color = color_for(k)
-        if k + 1 < len(points) and joined[k]:
-            x2, y2 = points[k + 1]
-            # Match the circle's 2r+1 pixel diameter so joints don't bulge.
-            if y == y2:
-                pygame.draw.rect(surface, color, (min(x, x2), y - r, abs(x - x2), 2 * r + 1))
-            elif x == x2:
-                pygame.draw.rect(surface, color, (x - r, min(y, y2), 2 * r + 1, abs(y - y2)))
-            else:
-                pygame.draw.line(surface, color, (x, y), (x2, y2), 2 * r + 1)
-        gfx.aa_circle(surface, color, (x, y), r)
-
-
-class Particle:
-    def __init__(self, pos, color):
-        angle = random.uniform(0, math.tau)
-        speed = random.uniform(2.0, 7.0)
-        self.x, self.y = pos
-        self.vx, self.vy = math.cos(angle) * speed, math.sin(angle) * speed
-        self.color = color
-        self.life = self.max_life = random.uniform(0.35, 0.7)
-        self.size = random.uniform(0.07, 0.15)
+    def steer(self, direction):
+        self.world.queue_direction(self.local_id, direction)
 
     def update(self, dt):
-        self.x += self.vx * dt
-        self.y += self.vy * dt
-        self.vx *= 0.9 ** (dt * 60)
-        self.vy *= 0.9 ** (dt * 60)
-        self.life -= dt
+        self.countdown = max(-GO_TIME, self.countdown - dt)
+        if self.countdown > 0 or self.world.over:
+            return []
+        events = []
+        self.step_timer += dt
+        interval = 1 / self.world.speed
+        while self.step_timer >= interval and not self.world.over:
+            self.step_timer -= interval
+            step_events = self.world.step()
+            self.steps += 1
+            self.after_step(step_events)
+            events += step_events
+            interval = 1 / self.world.speed
+        return events
 
-    def draw(self, surface, to_px, cell):
-        k = max(0.0, self.life / self.max_life)
-        gfx.aa_circle(surface, gfx.lerp_color(gfx.FIELD_A, self.color, k), to_px((self.x, self.y)), self.size * cell * (0.4 + 0.6 * k))
+    def after_step(self, events):
+        pass
 
+    def restart(self):
+        self.start()
 
-class ScorePopup:
-    LIFETIME = 0.8
-
-    def __init__(self, pos, text, color):
-        self.x, self.y = pos
-        self.text = text
-        self.color = color
-        self.age = 0.0
-
-    def update(self, dt):
-        self.age += dt
-        self.y -= dt * 1.2
-
-    def draw(self, surface, to_px, cell):
-        k = self.age / self.LIFETIME
-        alpha = round(255 * (1 - k * k))
-        gfx.draw_text(surface, self.text, cell * 0.8, self.color, to_px((self.x, self.y)), anchor="center", bold=True, alpha=alpha)
+    def leave(self):
+        self.app.show_main_menu()
 
 
-class Game:
+class HostSession(LocalSession):
+    over_hint = "Space to play again   ·   Esc for lobby"
+
     def __init__(self, app):
-        self.app = app
-        self.reset()
+        self.host = app.host
+        super().__init__(app, list(self.host.players.items()))
 
-    def reset(self):
-        self.quantum = QuantumState()
-        self.snake = Snake((GRID_WIDTH // 4, GRID_HEIGHT // 2), self.quantum)
-        self.speed = START_SPEED
-        self.game_over = False
-        self.game_over_time = 0.0
-        self.step_timer = 0.0
-        self.shake = 0.0
+    def start(self):
+        super().start()
+        self.host.in_game = True
+        self.host.broadcast({"type": "start", "world": self.world.to_dict(), "countdown": self.countdown})
+
+    def update(self, dt):
+        for kind, player_id, data in self.host.poll():
+            if kind == "message" and data.get("type") == "input":
+                direction = tuple(data.get("dir") or ())
+                if direction in DIRECTIONS:
+                    self.world.queue_direction(player_id, direction)
+            elif kind == "left":
+                self.return_to_lobby(notice=f"{data} left the game")
+                return []
+        return super().update(dt)
+
+    def after_step(self, events):
+        self.host.broadcast({"type": "state", "world": self.world.to_dict(), "events": events})
+
+    def leave(self):
+        self.return_to_lobby()
+
+    def return_to_lobby(self, notice=None):
+        self.host.in_game = False
+        self.host.broadcast({"type": "return_to_lobby"})
+        self.host.broadcast_lobby()
+        self.app.show_host_lobby(notice)
+
+
+class ClientSession:
+    can_restart = False
+    over_hint = "Waiting for the host to play again   ·   Esc to leave"
+
+    def __init__(self, app, start_message):
+        self.app = app
+        self.client = app.client
+        self.local_id = self.client.player_id
+        self.generation = 0
+        self._start(start_message)
+
+    def _start(self, message):
+        self.world = World.from_dict(message["world"])
+        self.countdown = message.get("countdown", COUNTDOWN)
+        self.since_state = 0.0
+        self.steps = 0
+        self.generation += 1
+
+    @property
+    def t(self):
+        if self.world.over or self.countdown > 0:
+            return 1.0
+        return min(1.0, self.since_state * self.world.speed)
+
+    def steer(self, direction):
+        if not self.world.over:
+            self.client.send({"type": "input", "dir": direction})
+
+    def update(self, dt):
+        self.countdown = max(-GO_TIME, self.countdown - dt)
+        self.since_state += dt
+        events = []
+        for kind, data in self.client.poll():
+            if kind == "closed":
+                self.app.show_main_menu(notice=data)
+                return []
+            message_type = data.get("type")
+            if message_type == "state":
+                self.world = World.from_dict(data["world"], previous=self.world)
+                self.since_state = 0.0
+                self.steps += 1
+                events += data["events"]
+            elif message_type == "start":
+                self._start(data)
+                events = []
+            elif message_type == "return_to_lobby":
+                self.app.show_client_lobby()
+                return []
+        return events
+
+    def restart(self):
+        pass
+
+    def leave(self):
+        self.app.show_main_menu()
+
+
+class GameScene:
+    def __init__(self, app, session):
+        self.app = app
+        self.session = session
+        self.reset_effects()
+
+    def reset_effects(self):
+        self.generation = self.session.generation
         self.particles = []
         self.popups = []
         self.eaten_apple = None
-        self.apple = self.spawn_apple()
+        self.eaten_step = -1
+        self.shake = 0.0
+        self.game_over_time = 0.0
 
-    @property
-    def score(self):
-        return sum(block_type is None for block_type in self.snake.block_types)
-
-    def spawn_apple(self):
-        free_cells = [
-            (x, y)
-            for x in range(GRID_WIDTH)
-            for y in range(GRID_HEIGHT)
-            if not self.snake.occupies((x, y))
-        ]
-        if not free_cells:
-            return None
-        weights = [apple_type.spawn_weight for apple_type in APPLE_TYPES]
-        apple_type = random.choices(APPLE_TYPES, weights=weights)[0]
-        return apple_type(random.choice(free_cells))
+    def palette_for(self, index):
+        return render.SNAKE_PALETTES[index % len(render.SNAKE_PALETTES)]
 
     # --- Scene interface -------------------------------------------------
 
@@ -312,64 +208,46 @@ class Game:
         if event.type != pygame.KEYDOWN:
             return
         if event.key == pygame.K_ESCAPE:
-            self.app.show_main_menu()
-        elif self.game_over:
-            if event.key in RESTART_KEYS:
-                self.reset()
+            self.session.leave()
+        elif self.session.world.over:
+            if event.key in RESTART_KEYS and self.session.can_restart:
+                self.session.restart()
         elif event.key in KEY_DIRECTIONS:
-            self.snake.queue_direction(KEY_DIRECTIONS[event.key])
+            self.session.steer(KEY_DIRECTIONS[event.key])
 
     def update(self, dt):
-        if self.apple:
-            self.apple.update(dt)
-        for effect_list in (self.particles, self.popups):
-            for effect in effect_list:
-                effect.update(dt)
-        self.particles = [p for p in self.particles if p.life > 0]
-        self.popups = [p for p in self.popups if p.age < ScorePopup.LIFETIME]
+        events = self.session.update(dt)
+        if self.app.scene is not self:
+            return  # the session switched scenes (e.g. disconnected)
+        if self.session.generation != self.generation:
+            self.reset_effects()
+
+        world = self.session.world
+        if world.apple:
+            world.apple.update(dt)
+        for effect in self.particles + self.popups:
+            effect.update(dt)
+        self.particles = [p for p in self.particles if not p.done]
+        self.popups = [p for p in self.popups if not p.done]
         self.shake = max(0.0, self.shake - dt)
+        self.game_over_time = self.game_over_time + dt if world.over else 0.0
 
-        if self.game_over:
-            self.game_over_time += dt
-            return
+        for event in events:
+            if event["type"] == "die":
+                self.shake = SHAKE_TIME
+            elif event["type"] == "eat":
+                self.on_eat(event)
 
-        self.step_timer += dt
-        interval = 1 / self.speed
-        while self.step_timer >= interval and not self.game_over:
-            self.step_timer -= interval
-            self.eaten_apple = None
-            self.step()
-            interval = 1 / self.speed
-
-    def step(self):
-        x, y = self.snake.next_head()
-        if self.snake.ghost_at((x, y)):
-            self.collapse_ghosts()
-        out_of_bounds = not (0 <= x < GRID_WIDTH and 0 <= y < GRID_HEIGHT)
-        if out_of_bounds or self.snake.would_collide_with_self((x, y)):
-            self.game_over = True
-            self.snake.settle()
-            self.shake = SHAKE_TIME
-            return
-        self.snake.move()
-        if self.apple and self.snake.head == self.apple.position:
-            self.eat(self.apple)
-            self.apple = self.spawn_apple()
-
-    def collapse_ghosts(self):
-        for ghost_id, outcome in self.quantum.measure().items():
-            self.snake.resolve_ghost(ghost_id, outcome)
-
-    def eat(self, apple):
-        score_before = self.score
-        apple.on_eaten(self)
+    def on_eat(self, event):
+        apple = APPLE_TYPES_BY_NAME[event["apple"]](tuple(event["pos"]))
+        apple.age = 1.0  # skip the pop-in animation
         center = (apple.position[0] + 0.5, apple.position[1] + 0.5)
-        self.particles.extend(Particle(center, apple.color) for _ in range(22))
-        gained = self.score - score_before
-        if gained:
-            self.popups.append(ScorePopup((center[0], center[1] - 0.6), f"{gained:+d}", apple.color))
+        self.particles.extend(render.Particle(center, apple.color) for _ in range(22))
+        if event["gained"]:
+            self.popups.append(render.ScorePopup((center[0], center[1] - 0.6), f"{event['gained']:+d}", apple.color))
         # Keep drawing it, shrinking, until the head visually reaches it.
         self.eaten_apple = apple
+        self.eaten_step = self.session.steps
 
     # --- Drawing ---------------------------------------------------------
 
@@ -382,6 +260,8 @@ class Game:
         return cell, field
 
     def draw(self, surface):
+        world = self.session.world
+        t = self.session.t
         surface.fill(gfx.BLACK)
         cell, field = self.layout(surface.get_size())
         if self.shake > 0:
@@ -391,28 +271,54 @@ class Game:
         def to_px(p):
             return field.x + p[0] * cell, field.y + p[1] * cell
 
-        t = 1.0 if self.game_over else min(1.0, self.step_timer * self.speed)
-
         surface.blit(gfx.playfield_background(cell, GRID_WIDTH, GRID_HEIGHT), field.topleft)
         surface.set_clip(field)
-        if self.apple:
-            self.apple.draw(surface, to_px((self.apple.position[0] + 0.5, self.apple.position[1] + 0.5)), cell)
-        if self.eaten_apple and t < 1:
+        if world.apple:
+            ax, ay = world.apple.position
+            world.apple.draw(surface, to_px((ax + 0.5, ay + 0.5)), cell)
+        if self.eaten_apple and self.eaten_step == self.session.steps and t < 1:
             ex, ey = self.eaten_apple.position
             self.eaten_apple.draw(surface, to_px((ex + 0.5, ey + 0.5)), cell, scale=1 - t)
-        self.snake.draw(surface, to_px, cell, t, self.quantum.ghost_phases, dead=self.game_over)
+        # Dead snakes underneath, then the others, with your own snake on top.
+        order = sorted(enumerate(world.players), key=lambda ip: (ip[1].alive, ip[1].id == self.session.local_id))
+        for index, player in order:
+            render.draw_snake(surface, player.snake, to_px, cell, t, self.palette_for(index), player.ghost_phases, dead=not player.alive)
         for effect in self.particles + self.popups:
             effect.draw(surface, to_px, cell)
         surface.set_clip(None)
 
+        self.draw_hud(surface, field, cell, world)
+        if self.session.countdown > -GO_TIME and not world.over:
+            self.draw_countdown(surface, field, cell)
+        if world.over:
+            self.draw_game_over(surface, field, cell, world)
+
+    def draw_hud(self, surface, field, cell, world):
         pad = cell * 0.5
-        gfx.draw_text(surface, "SCORE", cell * 0.55, gfx.TEXT_DIM, (field.x + pad, field.y + pad * 0.8))
-        gfx.draw_text(surface, str(self.score), cell * 1.1, gfx.TEXT, (field.x + pad, field.y + pad * 0.8 + cell * 0.55), bold=True)
+        top = field.y + pad * 0.8
+        if not world.versus:
+            gfx.draw_text(surface, "SCORE", cell * 0.55, gfx.TEXT_DIM, (field.x + pad, top))
+            gfx.draw_text(surface, str(world.players[0].score), cell * 1.1, gfx.TEXT, (field.x + pad, top + cell * 0.55), bold=True)
+            return
+        for index, player in enumerate(world.players[:2]):
+            color = self.palette_for(index)[0] if player.alive else gfx.TEXT_DIM
+            name = player.name + ("  (you)" if player.id == self.session.local_id else "")
+            x, anchor = (field.x + pad, "topleft") if index == 0 else (field.right - pad, "topright")
+            gfx.draw_text(surface, name.upper(), cell * 0.55, color, (x, top), anchor=anchor)
+            gfx.draw_text(surface, str(player.score), cell * 1.1, gfx.TEXT, (x, top + cell * 0.55), anchor=anchor, bold=True)
 
-        if self.game_over:
-            self.draw_game_over(surface, field, cell)
+    def draw_countdown(self, surface, field, cell):
+        remaining = self.session.countdown
+        cx, cy = field.center
+        if remaining > 0:
+            frac = remaining - math.floor(remaining)
+            size = cell * 4 * (1 + 0.35 * frac ** 3)
+            gfx.draw_glow_text(surface, str(math.ceil(remaining)), size, gfx.TEXT, gfx.ACCENT_DARK, (cx, cy))
+        else:
+            k = -remaining / GO_TIME
+            gfx.draw_text(surface, "GO!", cell * 4 * (1 + 0.4 * k), gfx.ACCENT, (cx, cy), anchor="center", bold=True, alpha=round(255 * (1 - k)))
 
-    def draw_game_over(self, surface, field, cell):
+    def draw_game_over(self, surface, field, cell, world):
         k = min(1.0, self.game_over_time / GAME_OVER_FADE_TIME)
         overlay = pygame.Surface(field.size, pygame.SRCALPHA)
         overlay.fill((0, 0, 0, round(160 * k)))
@@ -420,7 +326,22 @@ class Game:
         if k < 0.3:
             return
         cx, cy = field.center
-        gfx.draw_glow_text(surface, "GAME OVER", cell * 2.4, gfx.TEXT, (220, 60, 80), (cx, cy - cell * 1.6))
-        gfx.draw_text(surface, f"Score  {self.score}", cell * 1.1, gfx.ACCENT, (cx, cy + cell * 0.4), anchor="center", bold=True)
+        if world.versus:
+            winner = world.winner
+            if winner is None:
+                title, glow = "DRAW", (90, 110, 160)
+            elif winner.id == self.session.local_id:
+                title, glow = "YOU WIN", gfx.ACCENT_DARK
+            else:
+                title, glow = "YOU LOSE", (220, 60, 80)
+            gfx.draw_glow_text(surface, title, cell * 2.4, gfx.TEXT, glow, (cx, cy - cell * 1.8))
+            for index, player in enumerate(world.players):
+                y = cy + cell * (0.2 + index * 1.1)
+                gfx.draw_text(surface, f"{player.name}   {player.score}", cell * 0.9, self.palette_for(index)[0], (cx, y), anchor="center", bold=True)
+            hint_y = cy + cell * (0.6 + len(world.players) * 1.1)
+        else:
+            gfx.draw_glow_text(surface, "GAME OVER", cell * 2.4, gfx.TEXT, (220, 60, 80), (cx, cy - cell * 1.6))
+            gfx.draw_text(surface, f"Score  {world.players[0].score}", cell * 1.1, gfx.ACCENT, (cx, cy + cell * 0.4), anchor="center", bold=True)
+            hint_y = cy + cell * 2.2
         pulse = round(170 + 85 * math.sin(self.game_over_time * 4))
-        gfx.draw_text(surface, "Space to play again   ·   Esc for menu", cell * 0.7, gfx.TEXT_DIM, (cx, cy + cell * 2.2), anchor="center", alpha=pulse)
+        gfx.draw_text(surface, self.session.over_hint, cell * 0.7, gfx.TEXT_DIM, (cx, hint_y), anchor="center", alpha=pulse)

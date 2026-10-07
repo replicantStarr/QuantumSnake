@@ -1,8 +1,9 @@
 """Persistent player settings, stored as JSON next to the game."""
 
+import getpass
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 SETTINGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
 
@@ -17,12 +18,24 @@ RESOLUTION_PRESETS = [
 ]
 DEFAULT_RESOLUTION = (1280, 720)
 MIN_RESOLUTION = (480, 360)
+MAX_NAME_LENGTH = 16
+
+
+def default_name():
+    try:
+        name = getpass.getuser()
+    except Exception:
+        name = ""
+    return (name[:1].upper() + name[1:])[:MAX_NAME_LENGTH] or "Player"
 
 
 @dataclass
 class Settings:
     resolution: tuple = DEFAULT_RESOLUTION
     fullscreen: bool = False
+    player_name: str = field(default_factory=default_name)
+
+    default_name = staticmethod(default_name)
 
     @classmethod
     def load(cls):
@@ -33,6 +46,7 @@ class Settings:
             return cls(
                 resolution=(max(w, MIN_RESOLUTION[0]), max(h, MIN_RESOLUTION[1])),
                 fullscreen=bool(data.get("fullscreen", False)),
+                player_name=str(data.get("player_name") or default_name())[:MAX_NAME_LENGTH],
             )
         except (OSError, ValueError, KeyError, TypeError):
             return cls()
@@ -40,7 +54,11 @@ class Settings:
     def save(self):
         try:
             with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
-                json.dump({"resolution": list(self.resolution), "fullscreen": self.fullscreen}, f, indent=2)
+                json.dump({
+                    "resolution": list(self.resolution),
+                    "fullscreen": self.fullscreen,
+                    "player_name": self.player_name,
+                }, f, indent=2)
         except OSError:
             pass
 
