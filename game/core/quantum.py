@@ -12,6 +12,16 @@ def snake_collision_measure(angle=np.pi / 5):
     return outcome == "1"
 
 
+def purple_pair_measure():
+    qc = QuantumCircuit(2)
+    qc.h(0)
+
+    qc.cx(0, 1)
+    qc.x(1)
+
+    outcome, _ = Statevector.from_instruction(qc).measure([0, 1])
+    return (int(outcome[1]), int(outcome[0]))
+
 class QuantumState:
     def __init__(self):
         self._operations = {}
