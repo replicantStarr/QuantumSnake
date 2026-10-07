@@ -1,10 +1,10 @@
 """Multiplayer menus: finding a game, and the lobby before it starts."""
 
-from visuals import graphics as gfx
-from visuals import render
+from net.network import GAME_PORT, HOST_PLAYER_ID, MAX_PLAYERS, Discovery
 from scenes.game import ClientSession, GameScene
 from scenes.menu import Button, InfoRow, MenuScene, TextInput
-from net.network import GAME_PORT, HOST_PLAYER_ID, MAX_PLAYERS, Discovery
+from visuals import graphics as gfx
+from visuals import render
 
 IP_CHARACTERS = "0123456789.:abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-"
 
