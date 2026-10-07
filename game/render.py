@@ -14,28 +14,51 @@ SNAKE_PALETTES = [
 ]
 EYE_COLOR = (250, 250, 250)
 PUPIL_COLOR = (15, 20, 30)
+GHOST_FILL_COLOR = (0, 0, 0)
+GHOST_OUTLINE_COLOR = (0, 255, 0)
+GHOST_LOW_PHASE_COLOR = (0, 100, 0)  # Ry angle below pi/2
+GHOST_HIGH_PHASE_COLOR = (40, 110, 255)  # Ry angle pi/2 and above
 
 
-def draw_snake(surface, snake, to_px, cell, t, palette, dead=False):
+def draw_snake(surface, snake, to_px, cell, t, palette, ghost_phases, dead=False):
     head_color, tail_color = palette
     if dead:
         head_color, tail_color = gfx.scale_color(head_color, 0.55), gfx.scale_color(tail_color, 0.55)
     points = [to_px(p) for p in snake.render_path(t)]
     n = len(points)
+    # Resolving a ghost to 0 removes it from the middle of the body, leaving a gap.
+    cells = list(snake.body)
+    joined = [
+        k + 1 >= len(cells) or abs(cells[k][0] - cells[k + 1][0]) + abs(cells[k][1] - cells[k + 1][1]) == 1
+        for k in range(n)
+    ]
+
+    def block_type(k):
+        return snake.block_types[min(k, len(snake.block_types) - 1)]
+
+    def ghost_color(k):
+        phase = ghost_phases.get(block_type(k))
+        if phase is None:
+            return GHOST_FILL_COLOR
+        return GHOST_LOW_PHASE_COLOR if phase < math.pi / 2 else GHOST_HIGH_PHASE_COLOR
 
     def body_color(k):
+        if block_type(k) is not None:
+            return ghost_color(k)
         return gfx.lerp_color(head_color, tail_color, min(1.0, k / max(8, n - 1)))
 
     def outline(k):
+        if block_type(k) is not None and ghost_phases.get(block_type(k)) is None:
+            return GHOST_OUTLINE_COLOR
         return gfx.scale_color(body_color(k), 0.35)
 
     def highlight(k):
         return gfx.lerp_color(body_color(k), gfx.WHITE, 0.35)
 
-    _draw_tube(surface, points, cell * 0.43, outline)
-    _draw_tube(surface, points, cell * 0.36, body_color)
+    _draw_tube(surface, points, cell * 0.43, outline, joined)
+    _draw_tube(surface, points, cell * 0.36, body_color, joined)
     off = -cell * 0.09
-    _draw_tube(surface, [(x + off, y + off) for x, y in points], cell * 0.1, highlight)
+    _draw_tube(surface, [(x + off, y + off) for x, y in points], cell * 0.1, highlight, joined)
     _draw_head(surface, points[0], snake.direction, cell, head_color, dead)
 
 
@@ -58,8 +81,10 @@ def _draw_head(surface, center, direction, cell, color, dead):
             gfx.aa_circle(surface, PUPIL_COLOR, (ex + dx * cell * 0.04, ey + dy * cell * 0.04), cell * 0.065)
 
 
-def _draw_tube(surface, points, radius, color_for):
-    """Thick rounded line through axis-aligned points, coloured per segment (tail drawn first)."""
+def _draw_tube(surface, points, radius, color_for, joined):
+    """Thick rounded line through axis-aligned points, coloured per segment (tail drawn first).
+
+    `joined[k]` says whether point k connects to point k + 1."""
     r = round(radius)
     if r < 1:
         return
@@ -67,7 +92,7 @@ def _draw_tube(surface, points, radius, color_for):
     for k in range(len(points) - 1, -1, -1):
         x, y = points[k]
         color = color_for(k)
-        if k + 1 < len(points):
+        if k + 1 < len(points) and joined[k]:
             x2, y2 = points[k + 1]
             # Match the circle's 2r+1 pixel diameter so joints don't bulge.
             if y == y2:

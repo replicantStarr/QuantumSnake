@@ -8,6 +8,7 @@ import random
 from collections import deque
 
 from apples import APPLE_TYPES, APPLE_TYPES_BY_NAME
+from Quantum import QuantumState
 
 GRID_WIDTH = 25
 GRID_HEIGHT = 20
@@ -28,11 +29,14 @@ VERSUS_SPAWNS = [
 
 
 class Snake:
-    def __init__(self, start, direction=RIGHT):
+    def __init__(self, start, direction=RIGHT, quantum=None):
         self.body = deque([start])
+        # Parallel to body: None for a concrete block, else the block's ghost id.
+        self.block_types = deque([None])
+        self.quantum = quantum
         self.direction = direction
         self._turns = deque()
-        self.pending_growth = 2
+        self._pending_growth_types = [None, None]
         self._prev_body = list(self.body)
 
     @property
@@ -56,7 +60,7 @@ class Snake:
     def cells_blocking_next_step(self):
         # The tail moves out of the way this step unless the snake is growing.
         body = list(self.body)
-        return body if self.pending_growth > 0 else body[:-1]
+        return body if self._pending_growth_types else body[:-1]
 
     def move(self):
         self._prev_body = list(self.body)
@@ -64,8 +68,8 @@ class Snake:
         if self._turns:
             self.direction = self._turns.popleft()
         self.body.appendleft(new_head)
-        if self.pending_growth > 0:
-            self.pending_growth -= 1
+        if self._pending_growth_types:
+            self.block_types.append(self._pending_growth_types.pop(0))
         else:
             self.body.pop()
 
@@ -73,13 +77,44 @@ class Snake:
         """Stop interpolating: draw the snake exactly where it is."""
         self._prev_body = list(self.body)
 
-    def grow(self, amount=1):
-        self.pending_growth += amount
+    def grow(self, amount=1, ghost_id=None):
+        self._pending_growth_types.extend([ghost_id] * amount)
 
     def shrink(self, amount=1):
         for _ in range(amount):
             if len(self.body) > 1:
                 self.body.pop()
+                self._remove_block_type(self.block_types.pop())
+
+    def _remove_block_type(self, block_type):
+        if block_type is not None and self.quantum is not None:
+            self.quantum.remove_ghost(block_type)
+
+    def resolve_ghost(self, ghost_id, outcome):
+        if ghost_id in self._pending_growth_types:
+            self._pending_growth_types.remove(ghost_id)
+        try:
+            index = self.block_types.index(ghost_id)
+        except ValueError:
+            return
+        if outcome:
+            self.block_types[index] = None
+        else:
+            del self.block_types[index]
+            del self.body[index]
+            # Keep the interpolation source aligned so the tail doesn't jump.
+            if index < len(self._prev_body):
+                del self._prev_body[index]
+
+    def ghost_at(self, position):
+        return any(
+            cell == position and block_type is not None
+            for cell, block_type in zip(self.body, self.block_types)
+        )
+
+    @property
+    def concrete_length(self):
+        return sum(block_type is None for block_type in self.block_types)
 
     def occupies(self, position):
         return position in self.body
@@ -101,7 +136,8 @@ class Snake:
             "body": list(self.body),
             "prev": self._prev_body,
             "dir": self.direction,
-            "growth": self.pending_growth,
+            "blocks": list(self.block_types),
+            "growth": self._pending_growth_types,
         }
 
     @classmethod
@@ -110,22 +146,37 @@ class Snake:
         snake.body = deque(tuple(cell) for cell in data["body"])
         snake._prev_body = [tuple(cell) for cell in data["prev"]]
         snake.direction = tuple(data["dir"])
-        snake.pending_growth = data["growth"]
+        snake.block_types = deque(data["blocks"])
+        snake._pending_growth_types = list(data["growth"])
+        snake.quantum = None
         snake._turns = deque()
         return snake
 
 
 class Player:
-    def __init__(self, player_id, name, snake, score=0, alive=True):
+    def __init__(self, player_id, name, snake, alive=True, quantum=None, ghost_phases=None):
         self.id = player_id
         self.name = name
         self.snake = snake
-        self.score = score
         self.alive = alive
+        self.quantum = quantum  # only on the host; clients get ghost_phases from snapshots
+        self._ghost_phases = ghost_phases or {}
+
+    @property
+    def score(self):
+        return self.snake.concrete_length
+
+    @property
+    def ghost_phases(self):
+        return self.quantum.ghost_phases if self.quantum else self._ghost_phases
+
+    def collapse_ghosts(self):
+        for ghost_id, outcome in self.quantum.measure().items():
+            self.snake.resolve_ghost(ghost_id, outcome)
 
 
 class _EatContext:
-    """What an apple's `on_eaten(game)` sees: the eater's snake and score, plus the shared speed."""
+    """What an apple's `on_eaten(game)` sees: the eater's snake, score and quantum state, plus the shared speed."""
 
     def __init__(self, world, player):
         self._world = world
@@ -139,9 +190,12 @@ class _EatContext:
     def score(self):
         return self._player.score
 
-    @score.setter
-    def score(self, value):
-        self._player.score = value
+    @property
+    def quantum(self):
+        return self._player.quantum
+
+    def collapse_ghosts(self):
+        self._player.collapse_ghosts()
 
     @property
     def speed(self):
@@ -156,10 +210,10 @@ class World:
     def __init__(self, players):
         """`players` is a list of (player_id, name)."""
         spawns = [SOLO_SPAWN] if len(players) == 1 else VERSUS_SPAWNS
-        self.players = [
-            Player(pid, name, Snake(*spawns[i % len(spawns)]))
-            for i, (pid, name) in enumerate(players)
-        ]
+        self.players = []
+        for i, (pid, name) in enumerate(players):
+            quantum = QuantumState()
+            self.players.append(Player(pid, name, Snake(*spawns[i % len(spawns)], quantum=quantum), quantum=quantum))
         self.speed = START_SPEED
         self.over = False
         self.apple = self.spawn_apple()
@@ -203,6 +257,10 @@ class World:
         """Advance every snake one cell. Returns a list of event dicts for effects."""
         alive = self.alive_players
         heads = {p.id: p.snake.next_head() for p in alive}
+        # Running into one of your own ghost blocks measures all of your ghosts first.
+        for p in alive:
+            if p.snake.ghost_at(heads[p.id]):
+                p.collapse_ghosts()
         blocked = set()
         for p in alive:
             blocked.update(p.snake.cells_blocking_next_step())
@@ -247,7 +305,14 @@ class World:
             "over": self.over,
             "apple": {"type": type(apple).__name__, "pos": apple.position} if apple else None,
             "players": [
-                {"id": p.id, "name": p.name, "score": p.score, "alive": p.alive, "snake": p.snake.to_dict()}
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "alive": p.alive,
+                    "snake": p.snake.to_dict(),
+                    # JSON object keys must be strings, so send (ghost_id, phase) pairs.
+                    "ghost_phases": list(p.ghost_phases.items()),
+                }
                 for p in self.players
             ],
         }
@@ -259,7 +324,7 @@ class World:
         world.speed = data["speed"]
         world.over = data["over"]
         world.players = [
-            Player(p["id"], p["name"], Snake.from_dict(p["snake"]), p["score"], p["alive"])
+            Player(p["id"], p["name"], Snake.from_dict(p["snake"]), p["alive"], ghost_phases=dict(p["ghost_phases"]))
             for p in data["players"]
         ]
         world.apple = None
