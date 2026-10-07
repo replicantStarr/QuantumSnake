@@ -97,7 +97,7 @@ class Apple(ABC):
 
 class RedApple(Apple):
     color = (230, 50, 60)
-    spawn_weight = 10
+    spawn_weight = 14
 
     def on_eaten(self, game):
         ghost_id = game.quantum.add_ghost()
@@ -106,7 +106,7 @@ class RedApple(Apple):
 
 class GreenApple(Apple):
     color = (50, 180, 70)
-    spawn_weight = 2
+    spawn_weight = 4
 
     def on_eaten(self, game):
         game.quantum.apply_green_apple()
