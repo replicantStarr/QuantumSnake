@@ -6,7 +6,7 @@ from fractions import Fraction
 
 import pygame
 
-import graphics as gfx
+from visuals import graphics as gfx
 
 # (head colour, tail colour) for each player, in join order.
 SNAKE_PALETTES = [

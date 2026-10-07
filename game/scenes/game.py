@@ -15,11 +15,11 @@ import random
 
 import pygame
 
-import graphics as gfx
-import render
-from apples import APPLE_TYPES_BY_NAME
-from network import HOST_PLAYER_ID
-from world import DOWN, GRID_HEIGHT, GRID_WIDTH, LEFT, RIGHT, UP, World
+from visuals import graphics as gfx
+from visuals import render
+from core.apples import APPLE_TYPES_BY_NAME
+from net.network import HOST_PLAYER_ID
+from core.world import DOWN, GRID_HEIGHT, GRID_WIDTH, LEFT, RIGHT, UP, World
 
 # Arrow keys, WASD and numpad (8/4/6/2) all steer the snake.
 KEY_DIRECTIONS = {

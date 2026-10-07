@@ -13,11 +13,11 @@ os.environ.setdefault("SDL_VIDEO_CENTERED", "1")
 
 import pygame  # noqa: E402
 
-import graphics as gfx  # noqa: E402
-from game import GameScene, HostSession, LocalSession, LocalVersusSession  # noqa: E402
-from lobby import ClientLobby, HostLobby, ServerBrowser  # noqa: E402
-from menu import HowToPlayMenu, MainMenu, MenuBackground, MultiplayerMenu, SettingsMenu, ui_scale  # noqa: E402
-from network import HOST_PLAYER_ID, Client, Host  # noqa: E402
+from visuals import graphics as gfx  # noqa: E402
+from scenes.game import GameScene, HostSession, LocalSession, LocalVersusSession  # noqa: E402
+from scenes.lobby import ClientLobby, HostLobby, ServerBrowser  # noqa: E402
+from scenes.menu import HowToPlayMenu, MainMenu, MenuBackground, MultiplayerMenu, SettingsMenu, ui_scale  # noqa: E402
+from net.network import HOST_PLAYER_ID, Client, Host  # noqa: E402
 from settings import Settings  # noqa: E402
 
 WINDOW_TITLE = "Quantum Snake"

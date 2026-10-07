@@ -20,7 +20,7 @@ To add your own apple:
 import math
 from abc import ABC, abstractmethod
 
-import graphics as gfx
+from visuals import graphics as gfx
 
 STEM_COLOR = (110, 70, 40)
 LEAF_COLOR = (80, 200, 90)

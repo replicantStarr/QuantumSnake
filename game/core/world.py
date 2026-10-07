@@ -7,8 +7,8 @@ clients, which rebuild a read-only copy with `World.from_dict()` to draw.
 import random
 from collections import deque
 
-from apples import APPLE_TYPES, APPLE_TYPES_BY_NAME
-from Quantum import QuantumState
+from core.apples import APPLE_TYPES, APPLE_TYPES_BY_NAME
+from core.quantum import QuantumState
 
 GRID_WIDTH = 25
 GRID_HEIGHT = 20

@@ -12,8 +12,8 @@ import random
 
 import pygame
 
-import graphics as gfx
-from apples import BlackApple, GreenApple, RedApple
+from visuals import graphics as gfx
+from core.apples import BlackApple, GreenApple, RedApple
 from settings import MAX_NAME_LENGTH, windowed_resolutions
 
 CONFIRM_KEYS = (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE)
