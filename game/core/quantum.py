@@ -1,5 +1,3 @@
-"""Qiskit circuit state for the snake's ghost blocks."""
-
 import random
 
 import numpy as np
@@ -23,7 +21,6 @@ class QuantumState:
 
     @property
     def ghost_gates(self):
-        """Gates applied to each ghost's qubit, in order, as (name, angle) pairs."""
         return {ghost_id: list(operations) for ghost_id, operations in self._operations.items()}
 
     def add_ghost(self):
