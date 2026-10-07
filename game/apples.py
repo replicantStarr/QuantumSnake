@@ -8,10 +8,10 @@ To add your own apple:
     5. Add the class to APPLE_TYPES at the bottom of this file.
 
 `game` exposes:
-    game.snake.grow(n)   - add n segments
+    game.snake.grow(n)   - add n segments to the snake that ate it
     game.snake.shrink(n) - remove n segments (never below 1)
-    game.score           - int, read/write
-    game.speed           - moves per second, read/write
+    game.score           - that snake's player's score, read/write
+    game.speed           - moves per second (shared by all snakes), read/write
 """
 
 import math
@@ -139,3 +139,4 @@ class SpeedApple(Apple):
 
 
 APPLE_TYPES = [RedApple, GoldenApple, SpeedApple]
+APPLE_TYPES_BY_NAME = {apple_type.__name__: apple_type for apple_type in APPLE_TYPES}
