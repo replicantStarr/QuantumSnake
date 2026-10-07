@@ -1,11 +1,26 @@
-"""Qiskit circuit state for the snake's ghost blocks."""
-
 import random
 
 import numpy as np
 from qiskit import QuantumCircuit
 from qiskit.quantum_info import Statevector
 
+def snake_collision_measure(angle=np.pi / 5):
+    """Measure one qubit rotated `angle` towards |1>. True (|1>) means the colliding snake wins."""
+    qc = QuantumCircuit(1)
+    qc.ry(angle, 0)
+    outcome, _ = Statevector.from_instruction(qc).measure([0])
+    return outcome == "1"
+
+
+def purple_pair_measure():
+    qc = QuantumCircuit(2)
+    qc.h(0)
+
+    qc.cx(0, 1)
+    qc.x(1)
+
+    outcome, _ = Statevector.from_instruction(qc).measure([0, 1])
+    return (int(outcome[1]), int(outcome[0]))
 
 class QuantumState:
     def __init__(self):
@@ -20,6 +35,10 @@ class QuantumState:
             for ghost_id, operations in self._operations.items()
             if operations[-1][0] == "ry"
         }
+
+    @property
+    def ghost_gates(self):
+        return {ghost_id: list(operations) for ghost_id, operations in self._operations.items()}
 
     def add_ghost(self):
         ghost_id = self._next_ghost_id

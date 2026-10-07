@@ -12,8 +12,9 @@ import random
 
 import pygame
 
-import graphics as gfx
+from core.apples import BlackApple, GreenApple, PurpleApple, RedApple
 from settings import MAX_NAME_LENGTH, windowed_resolutions
+from visuals import graphics as gfx
 
 CONFIRM_KEYS = (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE)
 UP_KEYS = (pygame.K_UP, pygame.K_w, pygame.K_KP8)
@@ -371,15 +372,113 @@ class MainMenu(MenuScene):
     def __init__(self, app):
         super().__init__(app)
         self.set_items([
-            Button("Play Solo", app.start_game),
-            Button("Host Game", app.host_game),
-            Button("Join Game", app.show_server_browser),
+            Button("Play", app.start_game),
+            Button("Multiplayer", app.show_multiplayer_menu),
             Button("Settings", app.show_settings),
+            Button("How to Play", app.show_how_to_play),
             Button("Exit", app.quit),
         ])
 
     def back(self):
         self.app.quit()
+
+
+class MultiplayerMenu(MenuScene):
+    title = "MULTIPLAYER"
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.set_items([
+            Button("Local", app.start_local_versus),
+            Button("Join", app.show_server_browser),
+            Button("Host", app.host_game),
+            Button("Back", self.back),
+        ])
+
+    def back(self):
+        self.app.show_main_menu()
+
+
+class HowToPlayMenu(MenuScene):
+    title = "HOW TO PLAY"
+
+    APPLES = [
+        (RedApple, "Red", "Adds a ghost block: a qubit put in superposition by an H gate."),
+        (GreenApple, "Green", "Rotates every ghost's qubit with an Ry gate, changing its odds."),
+        (BlackApple, "Black", "Measures all your ghosts: each becomes solid, or vanishes."),
+        (PurpleApple, "Purple", "An entangled pair: one gives +20, one kills. Eating one decides both."),
+    ]
+    GHOST_RULES = [
+        "Only solid blocks count towards your score.",
+        "Steering into your own ghost measures all your ghosts first:",
+        "    if that block turns solid you crash, if it vanishes you pass through.",
+        "The panel on the right shows each ghost's id and quantum circuit.",
+    ]
+    CONTROLS = "Steer with arrows, WASD or numpad   ·   Local: P1 WASD, P2 arrows   ·   Esc to leave"
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.apples = [apple_type((0, 0)) for apple_type, _, _ in self.APPLES]
+        for apple in self.apples:
+            apple.age = 1.0  # skip the pop-in animation
+        self.set_items([Button("Back", self.back)])
+
+    def back(self):
+        self.app.show_main_menu()
+
+    def update(self, dt):
+        super().update(dt)
+        for apple in self.apples:
+            apple.update(dt)
+
+    def layout(self, size, ui):
+        w, h = size
+        button = self.items[0]
+        button.rect = pygame.Rect(0, 0, round(self.item_width * ui), round(58 * ui))
+        button.rect.midbottom = (w // 2, h - 64 * ui)
+
+    def draw(self, surface):
+        size = surface.get_size()
+        w, h = size
+        ui = ui_scale(size)
+        self.app.menu_background.draw(surface)
+        self.layout(size, ui)
+        gfx.draw_glow_text(surface, self.title, 72 * ui, gfx.TEXT, gfx.ACCENT_DARK, (w / 2, h * 0.11))
+
+        card = pygame.Rect(0, 0, round(860 * ui), round(450 * ui))
+        card.midtop = (w // 2, round(h * 0.11 + 56 * ui))
+        surface.blit(gfx.rounded_rect(card.size, round(16 * ui), gfx.PANEL_FILL, gfx.PANEL_BORDER, max(1, round(2 * ui))), card)
+        left = card.x + 32 * ui
+        y = card.y + 22 * ui
+
+        def heading(text):
+            gfx.draw_text(surface, text, 20 * ui, gfx.ACCENT, (left, y), bold=True)
+            return y + 34 * ui
+
+        def line(text, color=gfx.TEXT):
+            gfx.draw_text(surface, text, 20 * ui, color, (left, y))
+            return y + 28 * ui
+
+        y = heading("APPLES")
+        for apple, (_, name, description) in zip(self.apples, self.APPLES):
+            mid = y + 18 * ui
+            apple.draw(surface, (left + 18 * ui, mid), 44 * ui)
+            gfx.draw_text(surface, name, 20 * ui, apple.rim_color or apple.color, (left + 52 * ui, mid), anchor="midleft", bold=True)
+            gfx.draw_text(surface, description, 20 * ui, gfx.TEXT, (left + 130 * ui, mid), anchor="midleft")
+            y += 38 * ui  # tighter than the 44px icons so four rows fit above the Back button
+
+        y += 12 * ui
+        y = heading("GHOST BLOCKS")
+        for rule in self.GHOST_RULES:
+            y = line(rule)
+
+        y += 12 * ui
+        y = heading("CONTROLS")
+        line(self.CONTROLS, gfx.TEXT_DIM)
+
+        for item in self.items:
+            item.draw(surface, ui)
+        gfx.draw_text(surface, self.footer, 18 * ui, gfx.TEXT_DIM, (w / 2, h - 28 * ui), anchor="center", alpha=170)
 
 
 class SettingsMenu(MenuScene):

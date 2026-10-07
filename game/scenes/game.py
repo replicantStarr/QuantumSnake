@@ -15,11 +15,11 @@ import random
 
 import pygame
 
-import graphics as gfx
-import render
-from apples import APPLE_TYPES_BY_NAME
-from network import HOST_PLAYER_ID
-from world import DOWN, GRID_HEIGHT, GRID_WIDTH, LEFT, RIGHT, UP, World
+from core.apples import APPLE_TYPES_BY_NAME
+from core.world import DOWN, GRID_HEIGHT, GRID_WIDTH, LEFT, RIGHT, UP, World
+from net.network import HOST_PLAYER_ID
+from visuals import graphics as gfx
+from visuals import render
 
 # Arrow keys, WASD and numpad (8/4/6/2) all steer the snake.
 KEY_DIRECTIONS = {
@@ -28,6 +28,15 @@ KEY_DIRECTIONS = {
     pygame.K_LEFT: LEFT, pygame.K_a: LEFT, pygame.K_KP4: LEFT,
     pygame.K_RIGHT: RIGHT, pygame.K_d: RIGHT, pygame.K_KP6: RIGHT,
 }
+# Local versus: player 1 steers with WASD, player 2 with the arrow keys (or numpad).
+LOCAL_VERSUS_KEYS = [
+    {pygame.K_w: UP, pygame.K_s: DOWN, pygame.K_a: LEFT, pygame.K_d: RIGHT},
+    {
+        pygame.K_UP: UP, pygame.K_KP8: UP, pygame.K_DOWN: DOWN, pygame.K_KP2: DOWN,
+        pygame.K_LEFT: LEFT, pygame.K_KP4: LEFT, pygame.K_RIGHT: RIGHT, pygame.K_KP6: RIGHT,
+    },
+]
+LOCAL_VERSUS_PLAYERS = [(1, "Player 1 (WASD)"), (2, "Player 2 (Arrows)")]
 DIRECTIONS = (UP, DOWN, LEFT, RIGHT)
 RESTART_KEYS = (pygame.K_SPACE, pygame.K_RETURN, pygame.K_KP_ENTER)
 
@@ -35,6 +44,9 @@ COUNTDOWN = 3.0
 GO_TIME = 0.6
 SHAKE_TIME = 0.35
 GAME_OVER_FADE_TIME = 0.6
+
+PANEL_CELLS = 10  # width of the ghost-block panel, in grid cells
+PANEL_GAP = 0.6  # space between the playfield and the panel, in grid cells
 
 
 class LocalSession:
@@ -65,6 +77,10 @@ class LocalSession:
     def steer(self, direction):
         self.world.queue_direction(self.local_id, direction)
 
+    def on_key(self, key):
+        if key in KEY_DIRECTIONS:
+            self.steer(KEY_DIRECTIONS[key])
+
     def update(self, dt):
         self.countdown = max(-GO_TIME, self.countdown - dt)
         if self.countdown > 0 or self.world.over:
@@ -89,6 +105,21 @@ class LocalSession:
 
     def leave(self):
         self.app.show_main_menu()
+
+
+class LocalVersusSession(LocalSession):
+    """Two players sharing one keyboard; there's no single local player, so local_id is None."""
+
+    def __init__(self, app):
+        super().__init__(app, LOCAL_VERSUS_PLAYERS, local_id=None)
+
+    def on_key(self, key):
+        for (player_id, _), keys in zip(LOCAL_VERSUS_PLAYERS, LOCAL_VERSUS_KEYS):
+            if key in keys:
+                self.world.queue_direction(player_id, keys[key])
+
+    def leave(self):
+        self.app.show_multiplayer_menu()
 
 
 class HostSession(LocalSession):
@@ -155,6 +186,10 @@ class ClientSession:
         if not self.world.over:
             self.client.send({"type": "input", "dir": direction})
 
+    def on_key(self, key):
+        if key in KEY_DIRECTIONS:
+            self.steer(KEY_DIRECTIONS[key])
+
     def update(self, dt):
         self.countdown = max(-GO_TIME, self.countdown - dt)
         self.since_state += dt
@@ -212,8 +247,8 @@ class GameScene:
         elif self.session.world.over:
             if event.key in RESTART_KEYS and self.session.can_restart:
                 self.session.restart()
-        elif event.key in KEY_DIRECTIONS:
-            self.session.steer(KEY_DIRECTIONS[event.key])
+        else:
+            self.session.on_key(event.key)
 
     def update(self, dt):
         events = self.session.update(dt)
@@ -223,8 +258,8 @@ class GameScene:
             self.reset_effects()
 
         world = self.session.world
-        if world.apple:
-            world.apple.update(dt)
+        for apple in world.apples:
+            apple.update(dt)
         for effect in self.particles + self.popups:
             effect.update(dt)
         self.particles = [p for p in self.particles if not p.done]
@@ -241,6 +276,8 @@ class GameScene:
     def on_eat(self, event):
         apple = APPLE_TYPES_BY_NAME[event["apple"]](tuple(event["pos"]))
         apple.age = 1.0  # skip the pop-in animation
+        if "outcome" in event:
+            apple.outcome = event["outcome"]  # a purple apple, drawn in its measured colour
         center = (apple.position[0] + 0.5, apple.position[1] + 0.5)
         self.particles.extend(render.Particle(center, apple.color) for _ in range(22))
         if event["gained"]:
@@ -253,17 +290,22 @@ class GameScene:
 
     @staticmethod
     def layout(screen_size):
+        """Cell size, playfield rect and ghost-panel rect; the two sit side by side, centred."""
         w, h = screen_size
-        cell = max(2, min(w // GRID_WIDTH, h // GRID_HEIGHT))
+        cell = max(2, min(int(w // (GRID_WIDTH + PANEL_GAP + PANEL_CELLS)), h // GRID_HEIGHT))
         field = pygame.Rect(0, 0, cell * GRID_WIDTH, cell * GRID_HEIGHT)
-        field.center = (w // 2, h // 2)
-        return cell, field
+        panel = pygame.Rect(0, 0, cell * PANEL_CELLS, field.height)
+        gap = round(cell * PANEL_GAP)
+        field.topleft = ((w - field.width - gap - panel.width) // 2, (h - field.height) // 2)
+        panel.topleft = (field.right + gap, field.y)
+        return cell, field, panel
 
     def draw(self, surface):
         world = self.session.world
         t = self.session.t
         surface.fill(gfx.BLACK)
-        cell, field = self.layout(surface.get_size())
+        cell, field, panel = self.layout(surface.get_size())
+        render.draw_ghost_panel(surface, panel, cell, self.ghost_panel_sections(world))
         if self.shake > 0:
             amount = cell * 0.3 * (self.shake / SHAKE_TIME)
             field = field.move(round(random.uniform(-amount, amount)), round(random.uniform(-amount, amount)))
@@ -273,9 +315,14 @@ class GameScene:
 
         surface.blit(gfx.playfield_background(cell, GRID_WIDTH, GRID_HEIGHT), field.topleft)
         surface.set_clip(field)
-        if world.apple:
-            ax, ay = world.apple.position
-            world.apple.draw(surface, to_px((ax + 0.5, ay + 0.5)), cell)
+        unmeasured = [apple for apple in world.purple_apples if apple.outcome is None]
+        if len(unmeasured) == 2:
+            (x0, y0), (x1, y1) = (apple.position for apple in unmeasured)
+            start, end = to_px((x0 + 0.5, y0 + 0.5)), to_px((x1 + 0.5, y1 + 0.5))
+            render.draw_entanglement(surface, start, end, cell, unmeasured[0].age)
+        for apple in world.apples:
+            ax, ay = apple.position
+            apple.draw(surface, to_px((ax + 0.5, ay + 0.5)), cell)
         if self.eaten_apple and self.eaten_step == self.session.steps and t < 1:
             ex, ey = self.eaten_apple.position
             self.eaten_apple.draw(surface, to_px((ex + 0.5, ey + 0.5)), cell, scale=1 - t)
@@ -292,6 +339,17 @@ class GameScene:
             self.draw_countdown(surface, field, cell)
         if world.over:
             self.draw_game_over(surface, field, cell, world)
+
+    def ghost_panel_sections(self, world):
+        """(title, title colour, ghost_gates, ghost_phases) for each snake whose ghosts the panel lists."""
+        if self.session.local_id is not None:
+            me = world.player(self.session.local_id)
+            return [("GHOST BLOCKS", gfx.TEXT_DIM, me.ghost_gates, me.ghost_phases)] if me else []
+        # Players sharing the keyboard each get a section, in their snake's colour.
+        return [
+            (f"PLAYER {index + 1} GHOSTS", self.palette_for(index)[0], player.ghost_gates, player.ghost_phases)
+            for index, player in enumerate(world.players)
+        ]
 
     def draw_hud(self, surface, field, cell, world):
         pad = cell * 0.5
@@ -330,6 +388,9 @@ class GameScene:
             winner = world.winner
             if winner is None:
                 title, glow = "DRAW", (90, 110, 160)
+            elif self.session.local_id is None:
+                index = world.players.index(winner)
+                title, glow = f"PLAYER {index + 1} WINS", gfx.scale_color(self.palette_for(index)[0], 0.5)
             elif winner.id == self.session.local_id:
                 title, glow = "YOU WIN", gfx.ACCENT_DARK
             else:

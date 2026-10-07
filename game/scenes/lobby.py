@@ -1,10 +1,10 @@
 """Multiplayer menus: finding a game, and the lobby before it starts."""
 
-import graphics as gfx
-import render
-from game import ClientSession, GameScene
-from menu import Button, InfoRow, MenuScene, TextInput
-from network import GAME_PORT, HOST_PLAYER_ID, MAX_PLAYERS, Discovery
+from net.network import GAME_PORT, HOST_PLAYER_ID, MAX_PLAYERS, Discovery
+from scenes.game import ClientSession, GameScene
+from scenes.menu import Button, InfoRow, MenuScene, TextInput
+from visuals import graphics as gfx
+from visuals import render
 
 IP_CHARACTERS = "0123456789.:abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-"
 
@@ -82,7 +82,7 @@ class ServerBrowser(MenuScene):
         super().update(dt)
 
     def back(self):
-        self.app.show_main_menu()
+        self.app.show_multiplayer_menu()
 
     def close(self):
         self.discovery.close()
@@ -118,7 +118,7 @@ class HostLobby(MenuScene):
         super().update(dt)
 
     def back(self):
-        self.app.show_main_menu()
+        self.app.show_multiplayer_menu()
 
 
 class ClientLobby(MenuScene):
