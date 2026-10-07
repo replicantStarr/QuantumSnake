@@ -28,6 +28,15 @@ KEY_DIRECTIONS = {
     pygame.K_LEFT: LEFT, pygame.K_a: LEFT, pygame.K_KP4: LEFT,
     pygame.K_RIGHT: RIGHT, pygame.K_d: RIGHT, pygame.K_KP6: RIGHT,
 }
+# Local versus: player 1 steers with WASD, player 2 with the arrow keys (or numpad).
+LOCAL_VERSUS_KEYS = [
+    {pygame.K_w: UP, pygame.K_s: DOWN, pygame.K_a: LEFT, pygame.K_d: RIGHT},
+    {
+        pygame.K_UP: UP, pygame.K_KP8: UP, pygame.K_DOWN: DOWN, pygame.K_KP2: DOWN,
+        pygame.K_LEFT: LEFT, pygame.K_KP4: LEFT, pygame.K_RIGHT: RIGHT, pygame.K_KP6: RIGHT,
+    },
+]
+LOCAL_VERSUS_PLAYERS = [(1, "Player 1 (WASD)"), (2, "Player 2 (Arrows)")]
 DIRECTIONS = (UP, DOWN, LEFT, RIGHT)
 RESTART_KEYS = (pygame.K_SPACE, pygame.K_RETURN, pygame.K_KP_ENTER)
 
@@ -68,6 +77,10 @@ class LocalSession:
     def steer(self, direction):
         self.world.queue_direction(self.local_id, direction)
 
+    def on_key(self, key):
+        if key in KEY_DIRECTIONS:
+            self.steer(KEY_DIRECTIONS[key])
+
     def update(self, dt):
         self.countdown = max(-GO_TIME, self.countdown - dt)
         if self.countdown > 0 or self.world.over:
@@ -92,6 +105,21 @@ class LocalSession:
 
     def leave(self):
         self.app.show_main_menu()
+
+
+class LocalVersusSession(LocalSession):
+    """Two players sharing one keyboard; there's no single local player, so local_id is None."""
+
+    def __init__(self, app):
+        super().__init__(app, LOCAL_VERSUS_PLAYERS, local_id=None)
+
+    def on_key(self, key):
+        for (player_id, _), keys in zip(LOCAL_VERSUS_PLAYERS, LOCAL_VERSUS_KEYS):
+            if key in keys:
+                self.world.queue_direction(player_id, keys[key])
+
+    def leave(self):
+        self.app.show_multiplayer_menu()
 
 
 class HostSession(LocalSession):
@@ -158,6 +186,10 @@ class ClientSession:
         if not self.world.over:
             self.client.send({"type": "input", "dir": direction})
 
+    def on_key(self, key):
+        if key in KEY_DIRECTIONS:
+            self.steer(KEY_DIRECTIONS[key])
+
     def update(self, dt):
         self.countdown = max(-GO_TIME, self.countdown - dt)
         self.since_state += dt
@@ -215,8 +247,8 @@ class GameScene:
         elif self.session.world.over:
             if event.key in RESTART_KEYS and self.session.can_restart:
                 self.session.restart()
-        elif event.key in KEY_DIRECTIONS:
-            self.session.steer(KEY_DIRECTIONS[event.key])
+        else:
+            self.session.on_key(event.key)
 
     def update(self, dt):
         events = self.session.update(dt)
@@ -271,9 +303,7 @@ class GameScene:
         t = self.session.t
         surface.fill(gfx.BLACK)
         cell, field, panel = self.layout(surface.get_size())
-        me = world.player(self.session.local_id)
-        if me:
-            render.draw_ghost_panel(surface, panel, cell, me.ghost_gates, me.ghost_phases)
+        render.draw_ghost_panel(surface, panel, cell, self.ghost_panel_sections(world))
         if self.shake > 0:
             amount = cell * 0.3 * (self.shake / SHAKE_TIME)
             field = field.move(round(random.uniform(-amount, amount)), round(random.uniform(-amount, amount)))
@@ -302,6 +332,17 @@ class GameScene:
             self.draw_countdown(surface, field, cell)
         if world.over:
             self.draw_game_over(surface, field, cell, world)
+
+    def ghost_panel_sections(self, world):
+        """(title, title colour, ghost_gates, ghost_phases) for each snake whose ghosts the panel lists."""
+        if self.session.local_id is not None:
+            me = world.player(self.session.local_id)
+            return [("GHOST BLOCKS", gfx.TEXT_DIM, me.ghost_gates, me.ghost_phases)] if me else []
+        # Players sharing the keyboard each get a section, in their snake's colour.
+        return [
+            (f"PLAYER {index + 1} GHOSTS", self.palette_for(index)[0], player.ghost_gates, player.ghost_phases)
+            for index, player in enumerate(world.players)
+        ]
 
     def draw_hud(self, surface, field, cell, world):
         pad = cell * 0.5
@@ -340,6 +381,9 @@ class GameScene:
             winner = world.winner
             if winner is None:
                 title, glow = "DRAW", (90, 110, 160)
+            elif self.session.local_id is None:
+                index = world.players.index(winner)
+                title, glow = f"PLAYER {index + 1} WINS", gfx.scale_color(self.palette_for(index)[0], 0.5)
             elif winner.id == self.session.local_id:
                 title, glow = "YOU WIN", gfx.ACCENT_DARK
             else:

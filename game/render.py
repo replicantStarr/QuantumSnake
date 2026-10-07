@@ -117,15 +117,28 @@ def _draw_tube(surface, points, radius, color_for, joined):
         gfx.aa_circle(surface, color, (x, y), r)
 
 
-def draw_ghost_panel(surface, panel, cell, ghost_gates, ghost_phases):
-    """List every ghost block with its id and the circuit applied to its qubit."""
+def draw_ghost_panel(surface, panel, cell, sections):
+    """List ghost blocks with their ids and the circuits applied to their qubits.
+
+    `sections` is a list of (title, title_color, ghost_gates, ghost_phases), one per
+    snake shown; they split the panel's height evenly."""
     border = max(1, cell // 16)
     surface.blit(gfx.rounded_rect(panel.size, round(cell * 0.4), gfx.PANEL_FILL, gfx.PANEL_BORDER, border), panel.topleft)
-    pad = cell * 0.5
-    left, right = panel.x + pad, panel.right - pad
-    y = panel.y + pad * 0.8
+    for i, section in enumerate(sections):
+        top = panel.y + panel.height * i // len(sections)
+        bottom = panel.y + panel.height * (i + 1) // len(sections)
+        if i:
+            inset = cell * 0.5
+            pygame.draw.line(surface, gfx.PANEL_BORDER, (panel.x + inset, top), (panel.right - inset, top), border)
+        _draw_ghost_section(surface, pygame.Rect(panel.x, top, panel.width, bottom - top), cell, *section)
 
-    gfx.draw_text(surface, "GHOST BLOCKS", cell * 0.55, gfx.TEXT_DIM, (left, y))
+
+def _draw_ghost_section(surface, area, cell, title, title_color, ghost_gates, ghost_phases):
+    pad = cell * 0.5
+    left, right = area.x + pad, area.right - pad
+    y = area.y + pad * 0.8
+
+    gfx.draw_text(surface, title, cell * 0.55, title_color, (left, y))
     gfx.draw_text(surface, str(len(ghost_gates)), cell * 0.55, gfx.TEXT_DIM, (right, y), anchor="topright")
     y += cell * 1.2
 
@@ -136,7 +149,7 @@ def draw_ghost_panel(surface, panel, cell, ghost_gates, ghost_phases):
     # When the list overflows, keep the newest ghosts and summarise the rest.
     rows = list(ghost_gates.items())
     row_h = cell * 1.5
-    available = panel.bottom - pad - y
+    available = area.bottom - pad - y
     if len(rows) * row_h > available:
         more_h = cell * 0.8
         shown = max(0, int((available - more_h) // row_h))

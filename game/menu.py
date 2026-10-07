@@ -389,6 +389,7 @@ class MultiplayerMenu(MenuScene):
     def __init__(self, app):
         super().__init__(app)
         self.set_items([
+            Button("Local", app.start_local_versus),
             Button("Join", app.show_server_browser),
             Button("Host", app.host_game),
             Button("Back", self.back),
@@ -412,7 +413,7 @@ class HowToPlayMenu(MenuScene):
         "    if that block turns solid you crash, if it vanishes you pass through.",
         "The panel on the right shows each ghost's id and quantum circuit.",
     ]
-    CONTROLS = "Arrow keys, WASD or numpad to steer   ·   Esc to leave the game"
+    CONTROLS = "Steer with arrows, WASD or numpad   ·   Local: P1 WASD, P2 arrows   ·   Esc to leave"
 
     def __init__(self, app):
         super().__init__(app)

@@ -14,7 +14,7 @@ os.environ.setdefault("SDL_VIDEO_CENTERED", "1")
 import pygame  # noqa: E402
 
 import graphics as gfx  # noqa: E402
-from game import GameScene, HostSession, LocalSession  # noqa: E402
+from game import GameScene, HostSession, LocalSession, LocalVersusSession  # noqa: E402
 from lobby import ClientLobby, HostLobby, ServerBrowser  # noqa: E402
 from menu import HowToPlayMenu, MainMenu, MenuBackground, MultiplayerMenu, SettingsMenu, ui_scale  # noqa: E402
 from network import HOST_PLAYER_ID, Client, Host  # noqa: E402
@@ -83,6 +83,9 @@ class App:
 
     def start_game(self):
         self.set_scene(GameScene(self, LocalSession(self, [(HOST_PLAYER_ID, self.settings.player_name)])))
+
+    def start_local_versus(self):
+        self.set_scene(GameScene(self, LocalVersusSession(self)))
 
     def host_game(self):
         self.close_network()
