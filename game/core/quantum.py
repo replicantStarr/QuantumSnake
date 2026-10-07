@@ -4,11 +4,13 @@ import numpy as np
 from qiskit import QuantumCircuit
 from qiskit.quantum_info import Statevector
 
-def snake_collision_measure():
-    qc = QuantumCircuit(1, 1)
-    qc.ry(np.pi / 8, 0)
-    qc.measure(0, 0)
-    return Statevector.from_instruction(qc)
+def snake_collision_measure(angle=np.pi / 5):
+    """Measure one qubit rotated `angle` towards |1>. True (|1>) means the colliding snake wins."""
+    qc = QuantumCircuit(1)
+    qc.ry(angle, 0)
+    outcome, _ = Statevector.from_instruction(qc).measure([0])
+    return outcome == "1"
+
 
 class QuantumState:
     def __init__(self):

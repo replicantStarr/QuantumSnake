@@ -8,7 +8,7 @@ import random
 from collections import deque
 
 from core.apples import APPLE_TYPES, APPLE_TYPES_BY_NAME
-from core.quantum import QuantumState
+from core.quantum import QuantumState, snake_collision_measure
 
 GRID_WIDTH = 25
 GRID_HEIGHT = 20
@@ -266,16 +266,29 @@ class World:
         for p in alive:
             if p.snake.ghost_at(heads[p.id]):
                 p.collapse_ghosts()
-        blocked = set()
+        blocked = {}  # cell -> the player whose body is there
         for p in alive:
-            blocked.update(p.snake.cells_blocking_next_step())
+            for cell in p.snake.cells_blocking_next_step():
+                blocked[cell] = p
 
         events = []
+        dead = []
         for p in alive:
             x, y = heads[p.id]
             out_of_bounds = not (0 <= x < GRID_WIDTH and 0 <= y < GRID_HEIGHT)
             head_on = any(heads[o.id] == (x, y) for o in alive if o is not p)
-            if out_of_bounds or (x, y) in blocked or head_on:
+            owner = blocked.get((x, y))
+            if out_of_bounds or head_on or owner is p:
+                dead.append(p)
+            elif owner is not None:
+                # Ramming another snake's body: a quantum measurement decides who dies,
+                # heavily weighted against the snake doing the ramming.
+                won = snake_collision_measure()
+                events.append({"type": "quantum_collision", "player": p.id, "target": owner.id, "won": won})
+                dead.append(owner if won else p)
+
+        for p in alive:
+            if p in dead:
                 p.alive = False
                 events.append({"type": "die", "player": p.id})
 
