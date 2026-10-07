@@ -221,3 +221,5 @@ __marimo__/
 
 
 .claude
+# Local player settings
+game/settings.json
