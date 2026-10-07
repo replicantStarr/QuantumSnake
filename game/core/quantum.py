@@ -4,6 +4,11 @@ import numpy as np
 from qiskit import QuantumCircuit
 from qiskit.quantum_info import Statevector
 
+def snake_collision_measure():
+    qc = QuantumCircuit(1, 1)
+    qc.ry(np.pi / 8, 0)
+    qc.measure(0, 0)
+    return Statevector.from_instruction(qc)
 
 class QuantumState:
     def __init__(self):
