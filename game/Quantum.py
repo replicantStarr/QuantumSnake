@@ -21,6 +21,11 @@ class QuantumState:
             if operations[-1][0] == "ry"
         }
 
+    @property
+    def ghost_gates(self):
+        """Gates applied to each ghost's qubit, in order, as (name, angle) pairs."""
+        return {ghost_id: list(operations) for ghost_id, operations in self._operations.items()}
+
     def add_ghost(self):
         ghost_id = self._next_ghost_id
         self._next_ghost_id += 1

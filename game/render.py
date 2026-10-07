@@ -2,6 +2,7 @@
 
 import math
 import random
+from fractions import Fraction
 
 import pygame
 
@@ -18,6 +19,24 @@ GHOST_FILL_COLOR = (0, 0, 0)
 GHOST_OUTLINE_COLOR = (0, 255, 0)
 GHOST_LOW_PHASE_COLOR = (0, 100, 0)  # Ry angle below pi/2
 GHOST_HIGH_PHASE_COLOR = (40, 110, 255)  # Ry angle pi/2 and above
+H_GATE_COLOR = (110, 70, 170)
+WIRE_COLOR = (90, 105, 130)
+SMALL_GATE_CELL = 24  # below this cell size (px), gate boxes are too small for an angle label
+
+
+def ghost_colors(phase):
+    """(fill, outline) for a ghost block whose latest Ry angle is `phase` (None if not yet rotated)."""
+    if phase is None:
+        return GHOST_FILL_COLOR, GHOST_OUTLINE_COLOR
+    fill = GHOST_LOW_PHASE_COLOR if phase < math.pi / 2 else GHOST_HIGH_PHASE_COLOR
+    return fill, gfx.scale_color(fill, 0.35)
+
+
+def angle_label(angle):
+    """An angle as a multiple of pi, e.g. 3*pi/4 -> '3π/4'."""
+    ratio = Fraction(angle / math.pi).limit_denominator(16)
+    numerator = "" if ratio.numerator == 1 else str(ratio.numerator)
+    return f"{numerator}π" if ratio.denominator == 1 else f"{numerator}π/{ratio.denominator}"
 
 
 def draw_snake(surface, snake, to_px, cell, t, palette, ghost_phases, dead=False):
@@ -36,20 +55,14 @@ def draw_snake(surface, snake, to_px, cell, t, palette, ghost_phases, dead=False
     def block_type(k):
         return snake.block_types[min(k, len(snake.block_types) - 1)]
 
-    def ghost_color(k):
-        phase = ghost_phases.get(block_type(k))
-        if phase is None:
-            return GHOST_FILL_COLOR
-        return GHOST_LOW_PHASE_COLOR if phase < math.pi / 2 else GHOST_HIGH_PHASE_COLOR
-
     def body_color(k):
         if block_type(k) is not None:
-            return ghost_color(k)
+            return ghost_colors(ghost_phases.get(block_type(k)))[0]
         return gfx.lerp_color(head_color, tail_color, min(1.0, k / max(8, n - 1)))
 
     def outline(k):
-        if block_type(k) is not None and ghost_phases.get(block_type(k)) is None:
-            return GHOST_OUTLINE_COLOR
+        if block_type(k) is not None:
+            return ghost_colors(ghost_phases.get(block_type(k)))[1]
         return gfx.scale_color(body_color(k), 0.35)
 
     def highlight(k):
@@ -102,6 +115,81 @@ def _draw_tube(surface, points, radius, color_for, joined):
             else:
                 pygame.draw.line(surface, color, (x, y), (x2, y2), 2 * r + 1)
         gfx.aa_circle(surface, color, (x, y), r)
+
+
+def draw_ghost_panel(surface, panel, cell, ghost_gates, ghost_phases):
+    """List every ghost block with its id and the circuit applied to its qubit."""
+    border = max(1, cell // 16)
+    surface.blit(gfx.rounded_rect(panel.size, round(cell * 0.4), gfx.PANEL_FILL, gfx.PANEL_BORDER, border), panel.topleft)
+    pad = cell * 0.5
+    left, right = panel.x + pad, panel.right - pad
+    y = panel.y + pad * 0.8
+
+    gfx.draw_text(surface, "GHOST BLOCKS", cell * 0.55, gfx.TEXT_DIM, (left, y))
+    gfx.draw_text(surface, str(len(ghost_gates)), cell * 0.55, gfx.TEXT_DIM, (right, y), anchor="topright")
+    y += cell * 1.2
+
+    if not ghost_gates:
+        gfx.draw_text(surface, "None yet - red apples add them", cell * 0.45, gfx.TEXT_DIM, (left, y))
+        return
+
+    # When the list overflows, keep the newest ghosts and summarise the rest.
+    rows = list(ghost_gates.items())
+    row_h = cell * 1.5
+    available = panel.bottom - pad - y
+    if len(rows) * row_h > available:
+        more_h = cell * 0.8
+        shown = max(0, int((available - more_h) // row_h))
+        hidden = len(rows) - shown
+        rows = rows[hidden:]
+        gfx.draw_text(surface, f"+{hidden} earlier", cell * 0.45, gfx.TEXT_DIM, (left, y))
+        y += more_h
+
+    for ghost_id, operations in rows:
+        _draw_ghost_row(surface, ghost_id, operations, ghost_phases.get(ghost_id), left, right, y + row_h / 2, cell)
+        y += row_h
+
+
+def _draw_ghost_row(surface, ghost_id, operations, phase, left, right, mid, cell):
+    # Swatch matching how this block looks on the snake, then its id.
+    fill, outline = ghost_colors(phase)
+    swatch = (left + cell * 0.3, mid)
+    gfx.aa_circle(surface, outline, swatch, cell * 0.3)
+    gfx.aa_circle(surface, fill, swatch, cell * 0.22)
+    gfx.draw_text(surface, f"#{ghost_id}", cell * 0.55, gfx.TEXT, (left + cell * 0.8, mid), anchor="midleft", bold=True)
+
+    # Circuit: |0> on a wire, then one box per gate. The fonts lack a ket bracket, so draw it.
+    x = left + cell * 2.4
+    ket = gfx.draw_text(surface, "|0", cell * 0.5, gfx.TEXT, (x, mid), anchor="midleft")
+    w = max(1, round(cell * 0.05))
+    bx, half = ket.right + cell * 0.08, ket.height * 0.3
+    pygame.draw.line(surface, gfx.TEXT, (bx, mid - half), (bx + half * 0.5, mid), w)
+    pygame.draw.line(surface, gfx.TEXT, (bx + half * 0.5, mid), (bx, mid + half), w)
+    x = bx + half * 0.5 + cell * 0.2
+    pygame.draw.line(surface, WIRE_COLOR, (x, mid), (right, mid), max(1, cell // 14))
+
+    box_w, box_h, spacing = round(cell * 1.15), round(cell * 1.1), cell * 0.25
+    fits = max(1, int((right - x) // (box_w + spacing)))
+    if len(operations) > fits:
+        # Show the most recent gates; an ellipsis on the wire marks the earlier ones.
+        centre = x + spacing + box_w / 2
+        for i in (-1, 0, 1):
+            gfx.aa_circle(surface, gfx.TEXT, (centre + i * cell * 0.25, mid), max(1, cell * 0.07))
+        x += spacing + box_w
+        operations = operations[len(operations) - fits + 1:]
+    for gate, angle in operations:
+        x += spacing
+        box = pygame.Rect(round(x), round(mid - box_h / 2), box_w, box_h)
+        color = H_GATE_COLOR if gate == "h" else ghost_colors(angle)[0]
+        surface.blit(gfx.rounded_rect(box.size, round(cell * 0.18), color, gfx.lerp_color(color, gfx.WHITE, 0.4), max(1, cell // 20)), box.topleft)
+        if gate == "h":
+            gfx.draw_text(surface, "H", cell * 0.6, gfx.TEXT, box.center, anchor="center", bold=True)
+        elif cell < SMALL_GATE_CELL:
+            gfx.draw_text(surface, "Ry", cell * 0.5, gfx.TEXT, box.center, anchor="center", bold=True, shadow=False)
+        else:
+            gfx.draw_text(surface, "Ry", cell * 0.42, gfx.TEXT, (box.centerx, box.centery - cell * 0.02), anchor="midbottom", bold=True)
+            gfx.draw_text(surface, angle_label(angle), cell * 0.36, gfx.TEXT, (box.centerx, box.centery), anchor="midtop")
+        x += box_w
 
 
 class Particle:

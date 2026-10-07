@@ -36,6 +36,9 @@ GO_TIME = 0.6
 SHAKE_TIME = 0.35
 GAME_OVER_FADE_TIME = 0.6
 
+PANEL_CELLS = 10  # width of the ghost-block panel, in grid cells
+PANEL_GAP = 0.6  # space between the playfield and the panel, in grid cells
+
 
 class LocalSession:
     can_restart = True
@@ -253,17 +256,24 @@ class GameScene:
 
     @staticmethod
     def layout(screen_size):
+        """Cell size, playfield rect and ghost-panel rect; the two sit side by side, centred."""
         w, h = screen_size
-        cell = max(2, min(w // GRID_WIDTH, h // GRID_HEIGHT))
+        cell = max(2, min(int(w // (GRID_WIDTH + PANEL_GAP + PANEL_CELLS)), h // GRID_HEIGHT))
         field = pygame.Rect(0, 0, cell * GRID_WIDTH, cell * GRID_HEIGHT)
-        field.center = (w // 2, h // 2)
-        return cell, field
+        panel = pygame.Rect(0, 0, cell * PANEL_CELLS, field.height)
+        gap = round(cell * PANEL_GAP)
+        field.topleft = ((w - field.width - gap - panel.width) // 2, (h - field.height) // 2)
+        panel.topleft = (field.right + gap, field.y)
+        return cell, field, panel
 
     def draw(self, surface):
         world = self.session.world
         t = self.session.t
         surface.fill(gfx.BLACK)
-        cell, field = self.layout(surface.get_size())
+        cell, field, panel = self.layout(surface.get_size())
+        me = world.player(self.session.local_id)
+        if me:
+            render.draw_ghost_panel(surface, panel, cell, me.ghost_gates, me.ghost_phases)
         if self.shake > 0:
             amount = cell * 0.3 * (self.shake / SHAKE_TIME)
             field = field.move(round(random.uniform(-amount, amount)), round(random.uniform(-amount, amount)))

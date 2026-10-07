@@ -154,13 +154,14 @@ class Snake:
 
 
 class Player:
-    def __init__(self, player_id, name, snake, alive=True, quantum=None, ghost_phases=None):
+    def __init__(self, player_id, name, snake, alive=True, quantum=None, ghost_phases=None, ghost_gates=None):
         self.id = player_id
         self.name = name
         self.snake = snake
         self.alive = alive
-        self.quantum = quantum  # only on the host; clients get ghost_phases from snapshots
+        self.quantum = quantum  # only on the host; clients get ghost_phases/ghost_gates from snapshots
         self._ghost_phases = ghost_phases or {}
+        self._ghost_gates = ghost_gates or {}
 
     @property
     def score(self):
@@ -169,6 +170,10 @@ class Player:
     @property
     def ghost_phases(self):
         return self.quantum.ghost_phases if self.quantum else self._ghost_phases
+
+    @property
+    def ghost_gates(self):
+        return self.quantum.ghost_gates if self.quantum else self._ghost_gates
 
     def collapse_ghosts(self):
         for ghost_id, outcome in self.quantum.measure().items():
@@ -312,6 +317,7 @@ class World:
                     "snake": p.snake.to_dict(),
                     # JSON object keys must be strings, so send (ghost_id, phase) pairs.
                     "ghost_phases": list(p.ghost_phases.items()),
+                    "ghost_gates": list(p.ghost_gates.items()),
                 }
                 for p in self.players
             ],
@@ -324,7 +330,11 @@ class World:
         world.speed = data["speed"]
         world.over = data["over"]
         world.players = [
-            Player(p["id"], p["name"], Snake.from_dict(p["snake"]), p["alive"], ghost_phases=dict(p["ghost_phases"]))
+            Player(
+                p["id"], p["name"], Snake.from_dict(p["snake"]), p["alive"],
+                ghost_phases=dict(p["ghost_phases"]),
+                ghost_gates={ghost_id: [tuple(op) for op in ops] for ghost_id, ops in p.get("ghost_gates", [])},
+            )
             for p in data["players"]
         ]
         world.apple = None
