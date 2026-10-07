@@ -14,6 +14,7 @@ import pygame
 
 import graphics as gfx
 from apples import APPLE_TYPES
+from Quantum import QuantumState
 
 GRID_WIDTH = 25
 GRID_HEIGHT = 20
@@ -23,6 +24,10 @@ SNAKE_HEAD_COLOR = (130, 255, 170)
 SNAKE_TAIL_COLOR = (20, 130, 110)
 EYE_COLOR = (250, 250, 250)
 PUPIL_COLOR = (15, 20, 30)
+GHOST_FILL_COLOR = (0, 0, 0)
+GHOST_OUTLINE_COLOR = (0, 255, 0)
+GHOST_LOW_PHASE_COLOR = (0, 100, 0)  # Ry angle below pi/2
+GHOST_HIGH_PHASE_COLOR = (40, 110, 255)  # Ry angle pi/2 and above
 
 UP = (0, -1)
 DOWN = (0, 1)
@@ -44,11 +49,14 @@ GAME_OVER_FADE_TIME = 0.6
 
 
 class Snake:
-    def __init__(self, start):
+    def __init__(self, start, quantum=None):
         self.body = deque([start])
+        # Parallel to body: None for a concrete block, else the block's ghost id.
+        self.block_types = deque([None])
+        self.quantum = quantum
         self.direction = RIGHT
         self._turns = deque()
-        self.pending_growth = 2
+        self._pending_growth_types = [None, None]
         self._prev_body = list(self.body)
 
     @property
@@ -72,7 +80,7 @@ class Snake:
     def would_collide_with_self(self, position):
         # The tail moves out of the way this step unless the snake is growing.
         body = list(self.body)
-        if self.pending_growth == 0:
+        if not self._pending_growth_types:
             body = body[:-1]
         return position in body
 
@@ -82,8 +90,8 @@ class Snake:
         if self._turns:
             self.direction = self._turns.popleft()
         self.body.appendleft(new_head)
-        if self.pending_growth > 0:
-            self.pending_growth -= 1
+        if self._pending_growth_types:
+            self.block_types.append(self._pending_growth_types.pop(0))
         else:
             self.body.pop()
 
@@ -91,13 +99,40 @@ class Snake:
         """Stop interpolating: draw the snake exactly where it is."""
         self._prev_body = list(self.body)
 
-    def grow(self, amount=1):
-        self.pending_growth += amount
+    def grow(self, amount=1, ghost_id=None):
+        self._pending_growth_types.extend([ghost_id] * amount)
 
     def shrink(self, amount=1):
         for _ in range(amount):
             if len(self.body) > 1:
                 self.body.pop()
+                self._remove_block_type(self.block_types.pop())
+
+    def _remove_block_type(self, block_type):
+        if block_type is not None and self.quantum is not None:
+            self.quantum.remove_ghost(block_type)
+
+    def resolve_ghost(self, ghost_id, outcome):
+        if ghost_id in self._pending_growth_types:
+            self._pending_growth_types.remove(ghost_id)
+        try:
+            index = self.block_types.index(ghost_id)
+        except ValueError:
+            return
+        if outcome:
+            self.block_types[index] = None
+        else:
+            del self.block_types[index]
+            del self.body[index]
+            # Keep the interpolation source aligned so the tail doesn't jump.
+            if index < len(self._prev_body):
+                del self._prev_body[index]
+
+    def ghost_at(self, position):
+        return any(
+            cell == position and block_type is not None
+            for cell, block_type in zip(self.body, self.block_types)
+        )
 
     def occupies(self, position):
         return position in self.body
@@ -114,19 +149,42 @@ class Snake:
             path.append((gfx.lerp(px, cx, t), gfx.lerp(py, cy, t)))
         return path
 
-    def draw(self, surface, to_px, cell, t, dead=False):
+    def draw(self, surface, to_px, cell, t, ghost_phases, dead=False):
         points = [to_px(p) for p in self.render_path(t)]
         n = len(points)
+        # Resolving a ghost to 0 removes it from the middle of the body, leaving a gap.
+        cells = list(self.body)
+        joined = [
+            k + 1 >= len(cells) or abs(cells[k][0] - cells[k + 1][0]) + abs(cells[k][1] - cells[k + 1][1]) == 1
+            for k in range(n)
+        ]
+
+        def block_type(k):
+            return self.block_types[min(k, len(self.block_types) - 1)]
+
+        def ghost_color(k):
+            phase = ghost_phases.get(block_type(k))
+            if phase is None:
+                return GHOST_FILL_COLOR
+            return GHOST_LOW_PHASE_COLOR if phase < math.pi / 2 else GHOST_HIGH_PHASE_COLOR
 
         def body_color(k):
+            if block_type(k) is not None:
+                return ghost_color(k)
             return gfx.lerp_color(SNAKE_HEAD_COLOR, SNAKE_TAIL_COLOR, min(1.0, k / max(8, n - 1)))
 
-        outline = lambda k: gfx.scale_color(body_color(k), 0.35)
-        highlight = lambda k: gfx.lerp_color(body_color(k), gfx.WHITE, 0.35)
-        _draw_tube(surface, points, cell * 0.43, outline)
-        _draw_tube(surface, points, cell * 0.36, body_color)
+        def outline(k):
+            if block_type(k) is not None and ghost_phases.get(block_type(k)) is None:
+                return GHOST_OUTLINE_COLOR
+            return gfx.scale_color(body_color(k), 0.35)
+
+        def highlight(k):
+            return gfx.lerp_color(body_color(k), gfx.WHITE, 0.35)
+
+        _draw_tube(surface, points, cell * 0.43, outline, joined)
+        _draw_tube(surface, points, cell * 0.36, body_color, joined)
         off = -cell * 0.09
-        _draw_tube(surface, [(x + off, y + off) for x, y in points], cell * 0.1, highlight)
+        _draw_tube(surface, [(x + off, y + off) for x, y in points], cell * 0.1, highlight, joined)
 
         self._draw_head(surface, points[0], cell, dead)
 
@@ -149,8 +207,10 @@ class Snake:
                 gfx.aa_circle(surface, PUPIL_COLOR, (ex + dx * cell * 0.04, ey + dy * cell * 0.04), cell * 0.065)
 
 
-def _draw_tube(surface, points, radius, color_for):
-    """Thick rounded line through axis-aligned points, coloured per segment (tail drawn first)."""
+def _draw_tube(surface, points, radius, color_for, joined):
+    """Thick rounded line through axis-aligned points, coloured per segment (tail drawn first).
+
+    `joined[k]` says whether point k connects to point k + 1."""
     r = round(radius)
     if r < 1:
         return
@@ -158,7 +218,7 @@ def _draw_tube(surface, points, radius, color_for):
     for k in range(len(points) - 1, -1, -1):
         x, y = points[k]
         color = color_for(k)
-        if k + 1 < len(points):
+        if k + 1 < len(points) and joined[k]:
             x2, y2 = points[k + 1]
             # Match the circle's 2r+1 pixel diameter so joints don't bulge.
             if y == y2:
@@ -217,8 +277,8 @@ class Game:
         self.reset()
 
     def reset(self):
-        self.snake = Snake((GRID_WIDTH // 4, GRID_HEIGHT // 2))
-        self.score = 0
+        self.quantum = QuantumState()
+        self.snake = Snake((GRID_WIDTH // 4, GRID_HEIGHT // 2), self.quantum)
         self.speed = START_SPEED
         self.game_over = False
         self.game_over_time = 0.0
@@ -228,6 +288,10 @@ class Game:
         self.popups = []
         self.eaten_apple = None
         self.apple = self.spawn_apple()
+
+    @property
+    def score(self):
+        return sum(block_type is None for block_type in self.snake.block_types)
 
     def spawn_apple(self):
         free_cells = [
@@ -279,6 +343,8 @@ class Game:
 
     def step(self):
         x, y = self.snake.next_head()
+        if self.snake.ghost_at((x, y)):
+            self.collapse_ghosts()
         out_of_bounds = not (0 <= x < GRID_WIDTH and 0 <= y < GRID_HEIGHT)
         if out_of_bounds or self.snake.would_collide_with_self((x, y)):
             self.game_over = True
@@ -290,6 +356,10 @@ class Game:
             self.eat(self.apple)
             self.apple = self.spawn_apple()
 
+    def collapse_ghosts(self):
+        for ghost_id, outcome in self.quantum.measure().items():
+            self.snake.resolve_ghost(ghost_id, outcome)
+
     def eat(self, apple):
         score_before = self.score
         apple.on_eaten(self)
@@ -297,7 +367,7 @@ class Game:
         self.particles.extend(Particle(center, apple.color) for _ in range(22))
         gained = self.score - score_before
         if gained:
-            self.popups.append(ScorePopup((center[0], center[1] - 0.6), f"+{gained}", apple.color))
+            self.popups.append(ScorePopup((center[0], center[1] - 0.6), f"{gained:+d}", apple.color))
         # Keep drawing it, shrinking, until the head visually reaches it.
         self.eaten_apple = apple
 
@@ -330,7 +400,7 @@ class Game:
         if self.eaten_apple and t < 1:
             ex, ey = self.eaten_apple.position
             self.eaten_apple.draw(surface, to_px((ex + 0.5, ey + 0.5)), cell, scale=1 - t)
-        self.snake.draw(surface, to_px, cell, t, dead=self.game_over)
+        self.snake.draw(surface, to_px, cell, t, self.quantum.ghost_phases, dead=self.game_over)
         for effect in self.particles + self.popups:
             effect.draw(surface, to_px, cell)
         surface.set_clip(None)

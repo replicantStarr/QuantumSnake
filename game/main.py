@@ -20,7 +20,6 @@ WINDOW_TITLE = "Quantum Snake"
 FPS = 120
 MAX_FRAME_TIME = 0.1  # seconds; stops the game jumping ahead after a stall
 
-
 class App:
     def __init__(self):
         pygame.init()
