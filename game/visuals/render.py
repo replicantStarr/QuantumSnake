@@ -22,6 +22,7 @@ GHOST_HIGH_PHASE_COLOR = (40, 110, 255)  # Ry angle pi/2 and above
 H_GATE_COLOR = (110, 70, 170)
 WIRE_COLOR = (90, 105, 130)
 SMALL_GATE_CELL = 24  # below this cell size (px), gate boxes are too small for an angle label
+ENTANGLEMENT_COLOR = (170, 80, 240)
 
 
 def ghost_colors(phase):
@@ -37,6 +38,20 @@ def angle_label(angle):
     ratio = Fraction(angle / math.pi).limit_denominator(16)
     numerator = "" if ratio.numerator == 1 else str(ratio.numerator)
     return f"{numerator}π" if ratio.denominator == 1 else f"{numerator}π/{ratio.denominator}"
+
+
+def draw_entanglement(surface, start, end, cell, t):
+    """A dotted, flowing line (pixels) linking two entangled purple apples, animated by time `t`."""
+    (x0, y0), (x1, y1) = start, end
+    length = math.hypot(x1 - x0, y1 - y0)
+    spacing = cell * 0.5
+    if length < spacing:
+        return
+    count = int(length / spacing)
+    for i in range(count + 1):
+        k = (i + (t * 2) % 1) / (count + 1)
+        brightness = 0.35 + 0.25 * math.sin(k * math.tau * 3 - t * 4)
+        gfx.aa_circle(surface, gfx.scale_color(ENTANGLEMENT_COLOR, brightness), (x0 + (x1 - x0) * k, y0 + (y1 - y0) * k), cell * 0.06)
 
 
 def draw_snake(surface, snake, to_px, cell, t, palette, ghost_phases, dead=False):

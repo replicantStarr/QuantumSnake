@@ -7,7 +7,7 @@ clients, which rebuild a read-only copy with `World.from_dict()` to draw.
 import random
 from collections import deque
 
-from core.apples import APPLE_TYPES, APPLE_TYPES_BY_NAME
+from core.apples import APPLE_TYPES, APPLE_TYPES_BY_NAME, PurpleApple
 from core.quantum import QuantumState, snake_collision_measure
 
 GRID_WIDTH = 25
@@ -20,6 +20,7 @@ LEFT = (-1, 0)
 RIGHT = (1, 0)
 
 MAX_QUEUED_TURNS = 2
+PURPLE_SPAWN_CHANCE = 0.01  # per step, while no purple pair is on the board
 
 SOLO_SPAWN = ((GRID_WIDTH // 4, GRID_HEIGHT // 2), RIGHT)
 VERSUS_SPAWNS = [
@@ -116,6 +117,11 @@ class Snake:
     def concrete_length(self):
         return sum(block_type is None for block_type in self.block_types)
 
+    @property
+    def eventual_concrete_length(self):
+        """Concrete length once all pending solid growth has been added."""
+        return self.concrete_length + self._pending_growth_types.count(None)
+
     def occupies(self, position):
         return position in self.body
 
@@ -202,6 +208,9 @@ class _EatContext:
     def collapse_ghosts(self):
         self._player.collapse_ghosts()
 
+    def kill(self):
+        self._player.alive = False
+
     @property
     def speed(self):
         return self._world.speed
@@ -221,6 +230,8 @@ class World:
             self.players.append(Player(pid, name, Snake(*spawns[i % len(spawns)], quantum=quantum), quantum=quantum))
         self.speed = START_SPEED
         self.over = False
+        self.apple = None
+        self.purple_apples = []  # an entangled PurpleApple pair, or what's left of it
         self.apple = self.spawn_apple()
 
     @property
@@ -245,18 +256,34 @@ class World:
         if player and player.alive:
             player.snake.queue_direction(direction)
 
-    def spawn_apple(self):
-        free_cells = [
+    @property
+    def apples(self):
+        return ([self.apple] if self.apple else []) + self.purple_apples
+
+    def apple_at(self, position):
+        return next((apple for apple in self.apples if apple.position == position), None)
+
+    def free_cells(self):
+        return [
             (x, y)
             for x in range(GRID_WIDTH)
             for y in range(GRID_HEIGHT)
-            if not any(p.snake.occupies((x, y)) for p in self.players if p.alive)
+            if not self.apple_at((x, y)) and not any(p.snake.occupies((x, y)) for p in self.players if p.alive)
         ]
+
+    def spawn_apple(self):
+        free_cells = self.free_cells()
         if not free_cells:
             return None
         weights = [apple_type.spawn_weight for apple_type in APPLE_TYPES]
         apple_type = random.choices(APPLE_TYPES, weights=weights)[0]
         return apple_type(random.choice(free_cells))
+
+    def spawn_purple_pair(self):
+        free_cells = self.free_cells()
+        if len(free_cells) < 2:
+            return []
+        return PurpleApple.entangled_pair(*random.sample(free_cells, 2))
 
     def step(self):
         """Advance every snake one cell. Returns a list of event dicts for effects."""
@@ -299,18 +326,35 @@ class World:
                 p.snake.settle()
 
         for p in alive:
-            if p.alive and self.apple and p.snake.head == self.apple.position:
-                apple = self.apple
-                score_before = p.score
-                apple.on_eaten(_EatContext(self, p))
-                events.append({
-                    "type": "eat",
-                    "player": p.id,
-                    "apple": type(apple).__name__,
-                    "pos": apple.position,
-                    "gained": p.score - score_before,
-                })
+            apple = self.apple_at(p.snake.head) if p.alive else None
+            if apple is None:
+                continue
+            # Count growth still to come, so a big reward shows as one popup.
+            score_before = p.snake.eventual_concrete_length
+            apple.on_eaten(_EatContext(self, p))
+            event = {
+                "type": "eat",
+                "player": p.id,
+                "apple": type(apple).__name__,
+                "pos": apple.position,
+                "gained": p.snake.eventual_concrete_length - score_before,
+            }
+            if isinstance(apple, PurpleApple):
+                event["outcome"] = apple.outcome
+                self.purple_apples.remove(apple)
+            else:
                 self.apple = self.spawn_apple()
+            events.append(event)
+            if not p.alive:
+                events.append({"type": "die", "player": p.id})
+
+        # Once measured, the surviving twin shows its fate for a while, then fades away.
+        for apple in self.purple_apples:
+            if apple.outcome is not None:
+                apple.steps_left -= 1
+        self.purple_apples = [apple for apple in self.purple_apples if apple.steps_left > 0]
+        if not self.purple_apples and random.random() < PURPLE_SPAWN_CHANCE:
+            self.purple_apples = self.spawn_purple_pair()
 
         survivors_needed = 2 if self.versus else 1
         self.over = len(self.alive_players) < survivors_needed
@@ -322,6 +366,10 @@ class World:
             "speed": self.speed,
             "over": self.over,
             "apple": {"type": type(apple).__name__, "pos": apple.position} if apple else None,
+            "purple_apples": [
+                {"pos": purple.position, "qubit": purple.qubit, "outcome": purple.outcome}
+                for purple in self.purple_apples
+            ],
             "players": [
                 {
                     "id": p.id,
@@ -356,4 +404,11 @@ class World:
             pos = tuple(data["apple"]["pos"])
             old = previous.apple if previous else None
             world.apple = old if old and type(old) is apple_type and old.position == pos else apple_type(pos)
+        old_purples = {purple.position: purple for purple in previous.purple_apples} if previous else {}
+        world.purple_apples = []
+        for data_purple in data.get("purple_apples", []):
+            pos = tuple(data_purple["pos"])
+            purple = old_purples.get(pos) or PurpleApple(pos, qubit=data_purple["qubit"])
+            purple.outcome = data_purple["outcome"]
+            world.purple_apples.append(purple)
         return world

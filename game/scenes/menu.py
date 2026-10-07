@@ -12,7 +12,7 @@ import random
 
 import pygame
 
-from core.apples import BlackApple, GreenApple, RedApple
+from core.apples import BlackApple, GreenApple, PurpleApple, RedApple
 from settings import MAX_NAME_LENGTH, windowed_resolutions
 from visuals import graphics as gfx
 
@@ -406,6 +406,7 @@ class HowToPlayMenu(MenuScene):
         (RedApple, "Red", "Adds a ghost block: a qubit put in superposition by an H gate."),
         (GreenApple, "Green", "Rotates every ghost's qubit with an Ry gate, changing its odds."),
         (BlackApple, "Black", "Measures all your ghosts: each becomes solid, or vanishes."),
+        (PurpleApple, "Purple", "An entangled pair: one gives +20, one kills. Eating one decides both."),
     ]
     GHOST_RULES = [
         "Only solid blocks count towards your score.",
@@ -444,7 +445,7 @@ class HowToPlayMenu(MenuScene):
         self.layout(size, ui)
         gfx.draw_glow_text(surface, self.title, 72 * ui, gfx.TEXT, gfx.ACCENT_DARK, (w / 2, h * 0.11))
 
-        card = pygame.Rect(0, 0, round(860 * ui), round(430 * ui))
+        card = pygame.Rect(0, 0, round(860 * ui), round(450 * ui))
         card.midtop = (w // 2, round(h * 0.11 + 56 * ui))
         surface.blit(gfx.rounded_rect(card.size, round(16 * ui), gfx.PANEL_FILL, gfx.PANEL_BORDER, max(1, round(2 * ui))), card)
         left = card.x + 32 * ui
@@ -464,7 +465,7 @@ class HowToPlayMenu(MenuScene):
             apple.draw(surface, (left + 18 * ui, mid), 44 * ui)
             gfx.draw_text(surface, name, 20 * ui, apple.rim_color or apple.color, (left + 52 * ui, mid), anchor="midleft", bold=True)
             gfx.draw_text(surface, description, 20 * ui, gfx.TEXT, (left + 130 * ui, mid), anchor="midleft")
-            y += 44 * ui
+            y += 38 * ui  # tighter than the 44px icons so four rows fit above the Back button
 
         y += 12 * ui
         y = heading("GHOST BLOCKS")

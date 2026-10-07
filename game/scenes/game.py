@@ -258,8 +258,8 @@ class GameScene:
             self.reset_effects()
 
         world = self.session.world
-        if world.apple:
-            world.apple.update(dt)
+        for apple in world.apples:
+            apple.update(dt)
         for effect in self.particles + self.popups:
             effect.update(dt)
         self.particles = [p for p in self.particles if not p.done]
@@ -276,6 +276,8 @@ class GameScene:
     def on_eat(self, event):
         apple = APPLE_TYPES_BY_NAME[event["apple"]](tuple(event["pos"]))
         apple.age = 1.0  # skip the pop-in animation
+        if "outcome" in event:
+            apple.outcome = event["outcome"]  # a purple apple, drawn in its measured colour
         center = (apple.position[0] + 0.5, apple.position[1] + 0.5)
         self.particles.extend(render.Particle(center, apple.color) for _ in range(22))
         if event["gained"]:
@@ -313,9 +315,14 @@ class GameScene:
 
         surface.blit(gfx.playfield_background(cell, GRID_WIDTH, GRID_HEIGHT), field.topleft)
         surface.set_clip(field)
-        if world.apple:
-            ax, ay = world.apple.position
-            world.apple.draw(surface, to_px((ax + 0.5, ay + 0.5)), cell)
+        unmeasured = [apple for apple in world.purple_apples if apple.outcome is None]
+        if len(unmeasured) == 2:
+            (x0, y0), (x1, y1) = (apple.position for apple in unmeasured)
+            start, end = to_px((x0 + 0.5, y0 + 0.5)), to_px((x1 + 0.5, y1 + 0.5))
+            render.draw_entanglement(surface, start, end, cell, unmeasured[0].age)
+        for apple in world.apples:
+            ax, ay = apple.position
+            apple.draw(surface, to_px((ax + 0.5, ay + 0.5)), cell)
         if self.eaten_apple and self.eaten_step == self.session.steps and t < 1:
             ex, ey = self.eaten_apple.position
             self.eaten_apple.draw(surface, to_px((ex + 0.5, ey + 0.5)), cell, scale=1 - t)
